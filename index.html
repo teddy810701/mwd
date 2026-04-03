@@ -34,16 +34,15 @@ import {
   Clock,
   AlertTriangle,
   Trophy,
-  GraduationCap,
   Search,
   Eye,
   EyeOff,
   ChevronRight,
-  TrendingUp,
-  Award
+  Settings,
+  Save
 } from 'lucide-react';
 
-// --- Firebase Config & Initialization ---
+// --- Firebase 配置 ---
 const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -51,726 +50,413 @@ const db = getFirestore(app);
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'performance-audit-app';
 
 const App = () => {
-  // --- State Management ---
+  // --- 狀態管理 ---
   const [user, setUser] = useState(null);
   const [employees, setEmployees] = useState([]);
   const [logs, setLogs] = useState([]);
-  const [activeTab, setActiveTab] = useState('employee');
+  const [activeTab, setActiveTab] = useState('employee'); // 'employee' | 'manager' | 'admin'
   const [selectedEmpId, setSelectedEmpId] = useState(null);
-  const [authMode, setAuthMode] = useState(null); // 'manager' | 'admin' | null
+  const [authMode, setAuthMode] = useState(null); 
   const [passwordInput, setPasswordInput] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [systemMessage, setSystemMessage] = useState(null);
   const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
 
-  // Form States
+  // 店長評分表單狀態
   const [selectedItemLabel, setSelectedItemLabel] = useState('');
   const [customPoints, setCustomPoints] = useState(0);
   const [occurrenceDate, setOccurrenceDate] = useState(new Date().toISOString().split('T')[0]);
   const [note, setNote] = useState('');
+
+  // 管理員編輯狀態
   const [editingEmp, setEditingEmp] = useState(null);
-  const [isAddingNew, setIsAddingNew] = useState(false);
-  const [deletingEmpId, setDeletingEmpId] = useState(null);
-  const [deletingLogId, setDeletingLogId] = useState(null);
 
-  // --- Constants ---
-  const DEFAULT_INITIAL_POINTS = 600;
+  // --- 常數 ---
   const GLOBAL_BASE_BONUS = 600;
-
   const PERFORMANCE_ITEMS = {
     penalty: [
-      { label: '遲到 (預設1分/可修改)', val: -1 },
+      { label: '遲到 (預設-1/可修改)', val: -1 },
       { label: '延遲開工 (15分以上)', val: -10 },
-      { label: '工作態度不佳 (不服管教)', val: -5 },
-      { label: '作業失誤-輕 (漏餐具等)', val: -2 },
-      { label: '作業失誤-重 (燒焦/客訴)', val: -5 },
+      { label: '工作態度不佳', val: -5 },
+      { label: '作業失誤-輕', val: -2 },
+      { label: '作業失誤-重', val: -5 },
       { label: '環境責任 (收班不確實)', val: -3 },
-      { label: '服儀不整', val: -2 },
-      { label: '其他扣分事項', val: -1 }
+      { label: '其他扣分', val: -1 }
     ],
     bonus: [
       { label: '申請打掃環境', val: 2 },
-      { label: '支援另一間店', val: 1 },
-      { label: '獲得顧客五星評論', val: 2 },
+      { label: '支援他店', val: 1 },
+      { label: '顧客五星評論', val: 2 },
       { label: '表現優異 (店長推薦)', val: 5 },
-      { label: '其他加分事項', val: 1 }
+      { label: '其他加分', val: 1 }
     ]
   };
 
-  // --- 1. Firebase Auth Lifecycle ---
+  // --- 1. 認證流程 ---
   useEffect(() => {
     const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (error) {
-        console.error("Auth error:", error);
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
       }
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
+    return onAuthStateChanged(auth, setUser);
   }, []);
 
-  // --- 2. Real-time Data Listeners ---
+  // --- 2. 數據監聽 ---
   useEffect(() => {
     if (!user) return;
-
-    // Public Employee Collection
-    const empRef = collection(db, 'artifacts', appId, 'public', 'data', 'employees');
-    const unsubEmps = onSnapshot(empRef, (snapshot) => {
-      const empList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      setEmployees(empList);
-      if (empList.length > 0 && !selectedEmpId) setSelectedEmpId(empList[0].id);
-    }, (err) => console.error("Emp snapshot error:", err));
-
-    // Public Log Collection
-    const logRef = collection(db, 'artifacts', appId, 'public', 'data', 'logs');
-    const unsubLogs = onSnapshot(logRef, (snapshot) => {
-      const logList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      logList.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-      setLogs(logList);
-    }, (err) => console.error("Log snapshot error:", err));
-
-    return () => {
-      unsubEmps();
-      unsubLogs();
-    };
+    const unsubEmps = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'employees'), (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setEmployees(list);
+      if (list.length > 0 && !selectedEmpId) setSelectedEmpId(list[0].id);
+    });
+    const unsubLogs = onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setLogs(list.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp)));
+    });
+    return () => { unsubEmps(); unsubLogs(); };
   }, [user]);
 
-  // --- Helper Functions ---
-  const showMessage = (text, type = 'info') => {
+  // --- 功能函式 ---
+  const showMsg = (text, type = 'info') => {
     setSystemMessage({ text, type });
     setTimeout(() => setSystemMessage(null), 3000);
-  };
-
-  const calculateSeniority = (startDate) => {
-    if (!startDate) return { years: 0, months: 0, text: '未設定' };
-    const start = new Date(startDate);
-    const now = new Date();
-    let years = now.getFullYear() - start.getFullYear();
-    const anniv = new Date(start); anniv.setFullYear(now.getFullYear());
-    if (now < anniv) years--;
-    let months = now.getMonth() - start.getMonth();
-    if (now.getDate() < start.getDate()) months--;
-    if (months < 0) months += 12;
-    return { years, months, isEligible: years >= 1, text: `${years}年${months}個月` };
-  };
-
-  const calculateResult = (points, lastYearLow) => {
-    if (lastYearLow && points < 499) return { status: 'D (淘汰)', bg: 'bg-gray-900 text-white' };
-    if (points >= 500) return { status: 'A (合格)', bg: 'bg-green-100 text-green-800' };
-    if (points >= 481) return { status: 'B (警示)', bg: 'bg-yellow-100 text-yellow-800' };
-    return { status: 'C (重罰)', bg: 'bg-red-100 text-red-800' };
-  };
-
-  const calculateFinalPay = (emp) => {
-    if (!emp || emp.skillsPassed < 2) return 0;
-    const seniority = calculateSeniority(emp.startDate);
-    if (!seniority.isEligible) return 0;
-    const res = calculateResult(emp.currentPoints, emp.lastYearLow);
-    const base = GLOBAL_BASE_BONUS * emp.multiplier;
-    if (res.status.includes('A')) return Math.round(base);
-    if (res.status.includes('B')) return Math.round(base / 2);
-    return 0;
-  };
-
-  const getLevelAndMultiplierBySkills = (skills) => {
-    if (skills >= 3) return { level: '全能夥伴', defaultMult: 1.4 };
-    if (skills === 2) return { level: '熟練夥伴', defaultMult: 1.1 };
-    return { level: '一般夥伴', defaultMult: 0 };
-  };
-
-  // --- Firestore Mutations ---
-  const handlePointChange = async () => {
-    if (!user || !selectedEmpId || !selectedItemLabel) return;
-    const targetEmp = employees.find(e => e.id === selectedEmpId);
-    if (!targetEmp) return;
-
-    try {
-      const empRef = doc(db, 'artifacts', appId, 'public', 'data', 'employees', selectedEmpId);
-      await updateDoc(empRef, {
-        currentPoints: targetEmp.currentPoints + customPoints
-      });
-
-      const logRef = collection(db, 'artifacts', appId, 'public', 'data', 'logs');
-      await addDoc(logRef, {
-        empId: selectedEmpId,
-        occurrenceDate,
-        name: targetEmp.name,
-        amount: customPoints,
-        reason: selectedItemLabel,
-        note,
-        operator: '店長',
-        timestamp: new Date().toISOString()
-      });
-
-      setNote('');
-      setSelectedItemLabel('');
-      setCustomPoints(0);
-      showMessage(`已為 ${targetEmp.name} 更新分數`, 'success');
-    } catch (err) {
-      showMessage('雲端儲存失敗', 'error');
-    }
-  };
-
-  const handleDeleteLog = async (logId) => {
-    if (!user) return;
-    const logToDelete = logs.find(l => l.id === logId);
-    if (!logToDelete) return;
-
-    try {
-      const empRef = doc(db, 'artifacts', appId, 'public', 'data', 'employees', logToDelete.empId);
-      const empSnap = await getDoc(empRef);
-      if (empSnap.exists()) {
-        await updateDoc(empRef, {
-          currentPoints: empSnap.data().currentPoints - logToDelete.amount
-        });
-      }
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'logs', logId));
-      setDeletingLogId(null);
-      showMessage('紀錄已撤銷', 'info');
-    } catch (err) {
-      showMessage('撤銷失敗', 'error');
-    }
-  };
-
-  const handleSaveEmpEdit = async () => {
-    if (!user || !editingEmp) return;
-    try {
-      const empRef = collection(db, 'artifacts', appId, 'public', 'data', 'employees');
-      if (isAddingNew) {
-        await addDoc(empRef, editingEmp);
-        showMessage('夥伴註冊成功', 'success');
-      } else {
-        const { id, ...data } = editingEmp;
-        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'employees', id), data);
-        showMessage('夥伴資料已同步', 'success');
-      }
-      setEditingEmp(null);
-      setIsAddingNew(false);
-    } catch (err) {
-      showMessage('儲存失敗', 'error');
-    }
-  };
-
-  const handleDeleteEmp = async (id) => {
-    if (!user) return;
-    try {
-      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'employees', id));
-      setDeletingEmpId(null);
-      showMessage('人員已移除', 'success');
-    } catch (err) {
-      showMessage('刪除失敗', 'error');
-    }
   };
 
   const handleAuth = () => {
     if (authMode === 'manager' && passwordInput === '8888') {
       setActiveTab('manager');
       setAuthMode(null);
-      setPasswordInput('');
     } else if (authMode === 'admin' && passwordInput === '9999') {
       setActiveTab('admin');
       setAuthMode(null);
-      setPasswordInput('');
     } else {
-      setPasswordInput('');
-      showMessage('驗證失敗，密碼錯誤', 'error');
+      showMsg('密碼錯誤', 'error');
     }
+    setPasswordInput('');
   };
 
-  // --- Filters ---
+  const submitScore = async () => {
+    if (!selectedEmpId || !selectedItemLabel) return;
+    const emp = employees.find(e => e.id === selectedEmpId);
+    try {
+      const empRef = doc(db, 'artifacts', appId, 'public', 'data', 'employees', selectedEmpId);
+      await updateDoc(empRef, { currentPoints: (emp.currentPoints || 0) + customPoints });
+      await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'), {
+        empId: selectedEmpId,
+        name: emp.name,
+        amount: customPoints,
+        reason: selectedItemLabel,
+        note,
+        occurrenceDate,
+        timestamp: new Date().toISOString()
+      });
+      setNote(''); setSelectedItemLabel(''); setCustomPoints(0);
+      showMsg('評分成功', 'success');
+    } catch (e) { showMsg('儲存失敗', 'error'); }
+  };
+
+  const revokeLog = async (log) => {
+    if (!window.confirm('確定撤銷？分數將恢復')) return;
+    try {
+      const empRef = doc(db, 'artifacts', appId, 'public', 'data', 'employees', log.empId);
+      const snap = await getDoc(empRef);
+      if (snap.exists()) {
+        await updateDoc(empRef, { currentPoints: (snap.data().currentPoints || 0) - log.amount });
+      }
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'logs', log.id));
+      showMsg('已撤銷紀錄', 'info');
+    } catch (e) { showMsg('操作失敗', 'error'); }
+  };
+
+  const saveEmployee = async (e) => {
+    e.preventDefault();
+    const data = new FormData(e.target);
+    const payload = {
+      name: data.get('name'),
+      shop: data.get('shop'),
+      multiplier: parseFloat(data.get('multiplier')) || 1,
+      currentPoints: parseInt(data.get('points')) || 600,
+      initialPoints: parseInt(data.get('points')) || 600,
+    };
+    try {
+      if (editingEmp?.id) {
+        await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'employees', editingEmp.id), payload);
+      } else {
+        await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'employees'), payload);
+      }
+      setEditingEmp(null);
+      showMsg('夥伴資料已更新', 'success');
+    } catch (e) { showMsg('存檔失敗', 'error'); }
+  };
+
+  const deleteEmployee = async (id) => {
+    if (!window.confirm('確定刪除此夥伴？相關數據將遺失')) return;
+    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'employees', id));
+    showMsg('已移除夥伴');
+  };
+
+  // --- 變數定義 ---
   const selectedEmp = employees.find(e => e.id === selectedEmpId);
-  const managerViewLogs = logs.filter(log => log.empId === selectedEmpId);
-  const filteredPersonalLogs = logs
-    .filter(log => log.empId === selectedEmpId)
-    .filter(log => log.occurrenceDate.startsWith(selectedMonth));
+  const currentLogs = logs.filter(l => l.empId === selectedEmpId);
+  const bonus = selectedEmp ? Math.round(GLOBAL_BASE_BONUS * (selectedEmp.multiplier || 1) * (selectedEmp.currentPoints >= 500 ? 1 : selectedEmp.currentPoints >= 481 ? 0.5 : 0)) : 0;
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-900 pb-20 overflow-x-hidden">
-      {/* Navbar */}
-      <nav className="bg-white border-b sticky top-0 z-[100] shadow-sm px-4">
-        <div className="max-w-5xl mx-auto py-3 flex justify-between items-center">
-          <div className="flex items-center gap-2">
-             <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-orange-100">
-               <ShieldCheck size={24} />
-             </div>
-             <div>
-               <h1 className="text-lg font-black text-slate-800 leading-none">Cloud Audit</h1>
-               <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Performance Engine</p>
-             </div>
+    <div className="min-h-screen bg-slate-50 text-slate-900 pb-10">
+      {/* 頂部導覽 */}
+      <nav className="bg-white border-b sticky top-0 z-50 px-4 py-3 shadow-sm">
+        <div className="max-w-6xl mx-auto flex justify-between items-center">
+          <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveTab('employee')}>
+            <div className="bg-orange-600 p-2 rounded-lg text-white"><ShieldCheck size={20}/></div>
+            <span className="font-black text-lg tracking-tight">考核系統</span>
           </div>
-          
-          <div className="flex bg-slate-100 p-1 rounded-xl gap-1">
-            <button 
-              onClick={() => setActiveTab('employee')} 
-              className={`px-4 py-2 rounded-lg text-xs font-black transition-all flex items-center gap-2 ${activeTab === 'employee' ? 'bg-white shadow text-orange-600' : 'text-slate-500 hover:text-slate-800'}`}
-            >
-              <Search size={14} /> 查詢
-            </button>
-            <button 
-              onClick={() => activeTab === 'manager' ? setActiveTab('employee') : setAuthMode('manager')} 
-              className={`px-4 py-2 rounded-lg text-xs font-black transition-all flex items-center gap-2 ${activeTab === 'manager' ? 'bg-orange-600 text-white shadow-md' : 'text-slate-500 hover:text-slate-800'}`}
-            >
-              <Store size={14} /> 店長
-            </button>
-            <button 
-              onClick={() => activeTab === 'admin' ? setActiveTab('employee') : setAuthMode('admin')} 
-              className={`px-3 py-2 rounded-lg text-xs font-black transition-all flex items-center justify-center ${activeTab === 'admin' ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:text-slate-800'}`}
-            >
-              <Lock size={16} />
-            </button>
+          <div className="flex bg-slate-100 p-1 rounded-xl">
+            <button onClick={() => setActiveTab('employee')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'employee' ? 'bg-white shadow text-orange-600' : 'text-slate-500'}`}>查詢</button>
+            <button onClick={() => setAuthMode('manager')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'manager' ? 'bg-orange-600 text-white' : 'text-slate-500'}`}>店長</button>
+            <button onClick={() => setAuthMode('admin')} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${activeTab === 'admin' ? 'bg-slate-800 text-white' : 'text-slate-500'}`}><Settings size={14}/></button>
           </div>
         </div>
       </nav>
 
-      <main className="max-w-5xl mx-auto p-4 pt-6">
-        {/* Manager Mode */}
-        {activeTab === 'manager' && (
-          <div className="space-y-6 animate-in fade-in slide-in-from-top-4 duration-300">
-            <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-              <div>
-                <h2 className="text-2xl font-black text-slate-800 flex items-center gap-2">店長評分中心</h2>
-                <p className="text-sm text-slate-400 font-medium italic">選擇夥伴並執行點數更新</p>
-              </div>
-              <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl border shadow-sm self-start md:self-auto">
-                <Calendar size={16} className="text-orange-500" />
-                <input type="date" value={occurrenceDate} onChange={(e) => setOccurrenceDate(e.target.value)} className="bg-transparent text-sm font-bold text-slate-700 outline-none cursor-pointer" />
-              </div>
-            </header>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <aside className="lg:col-span-1 space-y-3">
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest px-2">夥伴清單</div>
-                <div className="space-y-2 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
-                  {employees.map(emp => (
-                    <button 
-                      key={emp.id} 
-                      onClick={() => setSelectedEmpId(emp.id)} 
-                      className={`w-full p-4 rounded-2xl text-left border-2 transition-all flex justify-between items-center ${selectedEmpId === emp.id ? 'border-orange-500 bg-orange-50 shadow-md ring-4 ring-orange-50' : 'border-white bg-white hover:border-slate-100'}`}
-                    >
-                      <div>
-                        <div className={`font-black text-base ${selectedEmpId === emp.id ? 'text-orange-700' : 'text-slate-700'}`}>{emp.name}</div>
-                        <div className="text-[10px] opacity-60 font-bold uppercase tracking-tighter">{emp.shop}</div>
-                      </div>
-                      <div className="text-right">
-                        <div className="text-lg font-black text-slate-800">{emp.currentPoints}</div>
-                        <div className="text-[10px] text-slate-400 font-bold">積分</div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              </aside>
-
-              <div className="lg:col-span-2 space-y-6">
-                <section className="bg-white p-6 md:p-8 rounded-3xl shadow-xl border border-slate-100">
-                   <div className="space-y-6">
-                     <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                       <div className="md:col-span-3 space-y-1">
-                         <label className="text-xs font-black text-slate-400 uppercase ml-1 tracking-wider">考核項目</label>
-                         <select 
-                           value={selectedItemLabel} 
-                           onChange={(e) => {
-                             const label = e.target.value;
-                             setSelectedItemLabel(label);
-                             const allItems = [...PERFORMANCE_ITEMS.penalty, ...PERFORMANCE_ITEMS.bonus];
-                             const item = allItems.find(i => i.label === label);
-                             if (item) setCustomPoints(item.val);
-                           }} 
-                           className="w-full bg-slate-50 border-2 border-slate-50 px-4 py-4 rounded-2xl font-bold focus:border-orange-400 focus:bg-white outline-none transition-all appearance-none"
-                         >
-                           <option value="">-- 請選擇考核事由 --</option>
-                           <optgroup label="🔴 扣分事項 (Penalty)">
-                             {PERFORMANCE_ITEMS.penalty.map(i => <option key={i.label} value={i.label}>{i.label}</option>)}
-                           </optgroup>
-                           <optgroup label="🟢 加分事項 (Bonus)">
-                             {PERFORMANCE_ITEMS.bonus.map(i => <option key={i.label} value={i.label}>{i.label}</option>)}
-                           </optgroup>
-                         </select>
-                       </div>
-                       <div className="space-y-1">
-                         <label className="text-xs font-black text-slate-400 uppercase ml-1 tracking-wider">點數變動</label>
-                         <input type="number" value={customPoints} onChange={(e) => setCustomPoints(parseInt(e.target.value) || 0)} className={`w-full px-4 py-4 border-2 border-slate-50 bg-slate-50 rounded-2xl font-black text-center focus:border-orange-400 focus:bg-white outline-none ${customPoints < 0 ? 'text-red-500' : 'text-emerald-500'}`} />
-                       </div>
-                     </div>
-                     
-                     <div className="space-y-1">
-                        <label className="text-xs font-black text-slate-400 uppercase ml-1 tracking-wider">事件詳細說明</label>
-                        <textarea placeholder="請記錄過程與原因..." value={note} onChange={(e) => setNote(e.target.value)} className="w-full h-32 px-5 py-4 rounded-3xl border-2 border-slate-50 bg-slate-50 outline-none focus:border-orange-400 focus:bg-white transition-all resize-none font-medium" />
-                     </div>
-
-                     <button onClick={handlePointChange} disabled={!selectedItemLabel || !note || !selectedEmpId} className="w-full py-5 rounded-2xl font-black text-xl bg-orange-600 text-white disabled:bg-slate-100 disabled:text-slate-300 transition-all active:scale-[0.98] shadow-xl shadow-orange-100 flex items-center justify-center gap-2">
-                       <CheckCircle2 size={24} /> 提交雲端評分
-                     </button>
-                   </div>
-                </section>
-
-                <section className="bg-white rounded-3xl border border-slate-100 overflow-hidden shadow-sm">
-                  <div className="px-6 py-4 border-b border-slate-50 flex items-center justify-between bg-slate-50/50">
-                    <h3 className="text-sm font-black text-slate-600 flex items-center gap-2">
-                      <Clock size={16} className="text-slate-400" /> {selectedEmp?.name} 的評分歷史
-                    </h3>
-                  </div>
-                  <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
-                    {managerViewLogs.length > 0 ? (
-                      <div className="divide-y divide-slate-50">
-                        {managerViewLogs.map(log => (
-                          <div key={log.id} className="p-5 hover:bg-slate-50 transition-colors flex justify-between items-start group">
-                            <div className="flex gap-4">
-                              <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs shrink-0 ${log.amount >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
-                                {log.amount > 0 ? '+' : ''}{log.amount}
-                              </div>
-                              <div>
-                                <div className="text-[10px] font-black text-slate-400">{log.occurrenceDate}</div>
-                                <div className="text-sm font-black text-slate-700">{log.reason}</div>
-                                {log.note && <p className="text-xs text-slate-400 mt-1">{log.note}</p>}
-                              </div>
-                            </div>
-                            <button onClick={() => setDeletingLogId(log.id)} className="p-2 text-slate-300 hover:text-red-500 rounded-lg opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={16} /></button>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="py-12 text-center text-slate-300 font-bold text-xs">尚無紀錄</div>
-                    )}
-                  </div>
-                </section>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Employee View */}
-        {activeTab === 'employee' && selectedEmp && (
-          <div className="max-w-3xl mx-auto space-y-8 pt-6 animate-in fade-in duration-500">
-            <div className="flex overflow-x-auto gap-2 pb-4 scrollbar-hide px-2 -mx-2">
-              {employees.map(emp => (
-                <button 
-                  key={emp.id} 
-                  onClick={() => setSelectedEmpId(emp.id)} 
-                  className={`whitespace-nowrap px-6 py-3 rounded-2xl text-xs font-black transition-all flex-shrink-0 ${selectedEmpId === emp.id ? 'bg-slate-800 text-white shadow-xl scale-105' : 'bg-white text-slate-400 border border-slate-100 hover:border-slate-300'}`}
-                >
-                  {emp.name}
-                </button>
+      <main className="max-w-6xl mx-auto p-4 mt-4">
+        {/* --- 1. 員工查詢模式 --- */}
+        {activeTab === 'employee' && (
+          <div className="animate-in fade-in duration-500 space-y-6">
+            <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+              {employees.map(e => (
+                <button key={e.id} onClick={() => setSelectedEmpId(e.id)} className={`px-5 py-2 rounded-full text-sm font-black shrink-0 transition-all ${selectedEmpId === e.id ? 'bg-slate-800 text-white shadow-lg' : 'bg-white text-slate-400 border hover:border-slate-300'}`}>{e.name}</button>
               ))}
             </div>
 
-            <div className="bg-white rounded-[2.5rem] overflow-hidden shadow-2xl border border-slate-100 relative group">
-              <div className="bg-gradient-to-br from-orange-500 to-orange-600 p-8 md:p-12 text-white text-center">
-                <div className="flex justify-center mb-4">
-                  <div className="bg-white/20 p-4 rounded-full backdrop-blur-md">
-                    <Trophy size={40} />
+            {selectedEmp && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="md:col-span-1 bg-white rounded-3xl p-8 shadow-xl border border-slate-100 text-center space-y-4">
+                  <div className="w-20 h-20 bg-orange-100 text-orange-600 rounded-full flex items-center justify-center mx-auto"><Trophy size={40}/></div>
+                  <h2 className="text-3xl font-black">{selectedEmp.name}</h2>
+                  <p className="text-xs font-bold text-slate-400 bg-slate-50 py-1 px-3 rounded-full inline-block">{selectedEmp.shop}</p>
+                  <div className="pt-4 border-t">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest">目前累計積分</p>
+                    <div className="text-5xl font-black text-slate-800">{selectedEmp.currentPoints}</div>
+                  </div>
+                  <div className="bg-orange-600 text-white p-4 rounded-2xl shadow-lg shadow-orange-100">
+                    <p className="text-[10px] font-bold opacity-80 uppercase">預估獎金</p>
+                    <div className="text-3xl font-black">${bonus}</div>
                   </div>
                 </div>
-                <h2 className="text-5xl md:text-6xl font-black mb-4 tracking-tighter">{selectedEmp.name}</h2>
-                <div className="flex flex-wrap justify-center gap-2">
-                   <span className="text-[10px] bg-white/20 px-4 py-1.5 rounded-full font-black uppercase tracking-widest">{selectedEmp.shop}</span>
-                   <span className="text-[10px] bg-slate-900/20 px-4 py-1.5 rounded-full font-black uppercase tracking-widest">{selectedEmp.level}</span>
+                
+                <div className="md:col-span-2 bg-white rounded-3xl p-6 shadow-sm border border-slate-100 space-y-4">
+                  <div className="flex justify-between items-center border-b pb-4">
+                    <h3 className="font-black flex items-center gap-2"><History size={18} className="text-orange-500"/> 積分異動紀錄</h3>
+                    <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="bg-slate-50 border-none rounded-lg px-3 py-1 text-xs font-bold" />
+                  </div>
+                  <div className="space-y-3 max-h-[500px] overflow-y-auto pr-2 custom-scrollbar">
+                    {currentLogs.filter(l => l.occurrenceDate.startsWith(selectedMonth)).map(l => (
+                      <div key={l.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl group transition-all">
+                        <div className="flex items-center gap-4">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black ${l.amount >= 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>{l.amount > 0 ? `+${l.amount}` : l.amount}</div>
+                          <div>
+                            <div className="text-[10px] text-slate-400 font-bold">{l.occurrenceDate}</div>
+                            <div className="text-sm font-black text-slate-700">{l.reason}</div>
+                          </div>
+                        </div>
+                        <ChevronRight size={16} className="text-slate-300 group-hover:text-slate-500"/>
+                      </div>
+                    ))}
+                    {currentLogs.filter(l => l.occurrenceDate.startsWith(selectedMonth)).length === 0 && <div className="py-20 text-center text-slate-300 font-bold italic">本月尚無資料</div>}
+                  </div>
                 </div>
               </div>
-              
-              <div className="p-6 md:p-10 space-y-10">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="bg-slate-50 p-8 rounded-[2rem] text-center border-b-4 border-slate-200">
-                    <p className="text-[10px] text-slate-400 font-black uppercase mb-2 tracking-widest">年度累積積分</p>
-                    <div className="text-6xl font-black text-slate-800">{selectedEmp.currentPoints}</div>
-                    <div className="mt-4 inline-flex items-center gap-1 text-xs font-bold text-slate-500 bg-white px-3 py-1 rounded-full shadow-sm">
-                       年度起點: {selectedEmp.initialPoints}
+            )}
+          </div>
+        )}
+
+        {/* --- 2. 店長模式 (關鍵修復部分) --- */}
+        {activeTab === 'manager' && (
+          <div className="animate-in slide-in-from-top-4 duration-300 space-y-6">
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+               <h2 className="text-2xl font-black flex items-center gap-2 text-slate-800"><Store className="text-orange-600"/> 店長評分中心</h2>
+               <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-xl shadow-sm border">
+                 <Calendar size={16} className="text-slate-400"/>
+                 <input type="date" value={occurrenceDate} onChange={e => setOccurrenceDate(e.target.value)} className="text-sm font-bold outline-none" />
+               </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* 夥伴選擇 */}
+              <div className="lg:col-span-1 space-y-2 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+                <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-2">選擇夥伴</p>
+                {employees.map(e => (
+                  <button key={e.id} onClick={() => setSelectedEmpId(e.id)} className={`w-full p-4 rounded-2xl text-left border-2 flex justify-between items-center transition-all ${selectedEmpId === e.id ? 'border-orange-500 bg-orange-50 shadow-md ring-4 ring-orange-50' : 'bg-white border-white'}`}>
+                    <div>
+                      <div className={`font-black ${selectedEmpId === e.id ? 'text-orange-700' : 'text-slate-700'}`}>{e.name}</div>
+                      <div className="text-[10px] opacity-60 font-bold">{e.shop}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-lg font-black">{e.currentPoints}</div>
+                      <div className="text-[10px] text-slate-400 font-bold">積分</div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+
+              {/* 評分表單 */}
+              <div className="lg:col-span-2 space-y-6">
+                <div className="bg-white p-6 md:p-8 rounded-[2rem] shadow-xl border border-slate-100 space-y-6">
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="md:col-span-3 space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 ml-1">考核項目</label>
+                      <select value={selectedItemLabel} onChange={e => {
+                        const l = e.target.value; setSelectedItemLabel(l);
+                        const item = [...PERFORMANCE_ITEMS.penalty, ...PERFORMANCE_ITEMS.bonus].find(i => i.label === l);
+                        if (item) setCustomPoints(item.val);
+                      }} className="w-full bg-slate-50 border-2 border-slate-50 px-4 py-4 rounded-2xl font-bold focus:border-orange-400 focus:bg-white outline-none">
+                        <option value="">請選擇事由...</option>
+                        <optgroup label="🔴 扣分">
+                          {PERFORMANCE_ITEMS.penalty.map(i => <option key={i.label} value={i.label}>{i.label}</option>)}
+                        </optgroup>
+                        <optgroup label="🟢 加分">
+                          {PERFORMANCE_ITEMS.bonus.map(i => <option key={i.label} value={i.label}>{i.label}</option>)}
+                        </optgroup>
+                      </select>
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-[10px] font-black text-slate-400 ml-1">點數增減</label>
+                      <input type="number" value={customPoints} onChange={e => setCustomPoints(parseInt(e.target.value) || 0)} className="w-full bg-slate-50 border-2 border-slate-50 px-4 py-4 rounded-2xl font-black text-center focus:border-orange-400 outline-none" />
                     </div>
                   </div>
-                  <div className="bg-orange-50 p-8 rounded-[2rem] text-center border-b-4 border-orange-200">
-                    <p className="text-[10px] text-orange-400 font-black uppercase mb-2 tracking-widest">預估績效獎金</p>
-                    <div className="text-6xl font-black text-orange-600">${calculateFinalPay(selectedEmp)}</div>
-                    <div className="mt-4 inline-flex items-center gap-1 text-xs font-bold text-orange-500 bg-white px-3 py-1 rounded-full shadow-sm">
-                       獎金倍率: {selectedEmp.multiplier.toFixed(1)}x
-                    </div>
+                  <div className="space-y-1">
+                    <label className="text-[10px] font-black text-slate-400 ml-1">事件說明 (必填)</label>
+                    <textarea placeholder="細節、客訴內容、或具體表現優良之處..." value={note} onChange={e => setNote(e.target.value)} className="w-full h-24 bg-slate-50 border-2 border-slate-50 p-4 rounded-2xl font-medium focus:border-orange-400 outline-none resize-none" />
                   </div>
+                  <button onClick={submitScore} disabled={!selectedEmpId || !selectedItemLabel || !note} className="w-full py-5 bg-orange-600 text-white rounded-2xl font-black text-lg shadow-lg disabled:bg-slate-200 transition-all flex items-center justify-center gap-2 active:scale-[0.98]">
+                    <CheckCircle2 size={20}/> 提交評分
+                  </button>
                 </div>
 
-                <div className="space-y-6">
-                  <div className="flex items-center justify-between px-2">
-                    <h3 className="font-black text-slate-800 flex items-center gap-2">
-                      <History size={18} className="text-orange-500" /> 積分異動明細
-                    </h3>
-                    <input 
-                      type="month" 
-                      value={selectedMonth} 
-                      onChange={(e) => setSelectedMonth(e.target.value)} 
-                      className="bg-slate-100 px-4 py-2 rounded-xl text-xs font-black text-slate-600 outline-none border-none cursor-pointer" 
-                    />
+                {/* 歷史紀錄與撤銷 */}
+                <div className="bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-sm">
+                  <div className="px-6 py-4 bg-slate-50/50 border-b flex justify-between items-center">
+                    <h3 className="text-xs font-black text-slate-600 flex items-center gap-2"><Clock size={14}/> {selectedEmp?.name} 近期異動</h3>
                   </div>
-                  
-                  {filteredPersonalLogs.length > 0 ? (
-                    <div className="grid gap-3">
-                      {filteredPersonalLogs.map(log => (
-                        <div key={log.id} className="p-5 bg-white border border-slate-100 rounded-3xl flex justify-between items-center group hover:border-slate-300 transition-all">
-                          <div className="flex gap-4 items-center">
-                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center font-black text-lg ${log.amount >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
-                              {log.amount > 0 ? '+' : ''}{log.amount}
-                            </div>
-                            <div>
-                              <div className="text-[10px] font-black text-slate-300 mb-0.5 uppercase tracking-wider">{log.occurrenceDate}</div>
-                              <div className="font-black text-slate-700">{log.reason}</div>
-                            </div>
+                  <div className="max-h-[300px] overflow-y-auto custom-scrollbar divide-y">
+                    {currentLogs.map(l => (
+                      <div key={l.id} className="p-4 flex justify-between items-center group hover:bg-slate-50">
+                        <div className="flex gap-4">
+                          <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black text-xs ${l.amount >= 0 ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>{l.amount}</div>
+                          <div>
+                            <div className="text-[10px] text-slate-400 font-bold">{l.occurrenceDate}</div>
+                            <div className="text-sm font-black text-slate-700">{l.reason}</div>
+                            {l.note && <div className="text-[10px] text-slate-400 italic mt-0.5">{l.note}</div>}
                           </div>
-                          <ChevronRight size={16} className="text-slate-200 group-hover:text-slate-400" />
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="py-20 text-center space-y-4">
-                       <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto">
-                          <Clock className="text-slate-200" size={32} />
-                       </div>
-                       <p className="text-slate-300 font-bold text-sm italic">本月尚無異動紀錄</p>
-                    </div>
-                  )}
+                        <button onClick={() => revokeLog(l)} className="p-2 text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={16}/></button>
+                      </div>
+                    ))}
+                    {currentLogs.length === 0 && <div className="py-10 text-center text-slate-300 font-bold italic text-xs">尚無異動紀錄</div>}
+                  </div>
                 </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* Admin Mode */}
+        {/* --- 3. 管理員模式 (新增員工/獎金倍率) --- */}
         {activeTab === 'admin' && (
-          <div className="space-y-6 animate-in fade-in duration-300">
-            <header className="flex flex-col sm:flex-row justify-between items-start sm:items-end gap-4">
-              <div>
-                <h2 className="text-2xl font-black text-slate-800">人員雲端管理</h2>
-                <p className="text-sm text-slate-400 font-medium italic">管理所有夥伴基本資料與倍率設定</p>
-              </div>
-              <button 
-                onClick={() => {
-                  setEditingEmp({
-                    name: '', shop: '', 
-                    startDate: new Date().toISOString().split('T')[0],
-                    level: '一般夥伴', skillsPassed: 0,
-                    initialPoints: DEFAULT_INITIAL_POINTS, 
-                    currentPoints: DEFAULT_INITIAL_POINTS, 
-                    multiplier: 0.0, lastYearLow: false
-                  });
-                  setIsAddingNew(true);
-                }} 
-                className="bg-slate-800 text-white px-6 py-4 rounded-2xl text-xs font-black shadow-xl flex items-center gap-2 hover:bg-slate-700 active:scale-95 transition-all"
-              >
-                <UserPlus size={16} /> 註冊新夥伴
-              </button>
-            </header>
+          <div className="animate-in fade-in duration-300 space-y-6">
+            <div className="flex justify-between items-center">
+               <h2 className="text-2xl font-black flex items-center gap-2"><Settings className="text-slate-600"/> 系統後台管理</h2>
+               <button onClick={() => {setEditingEmp({});}} className="bg-slate-800 text-white px-4 py-2 rounded-xl text-xs font-black flex items-center gap-2 shadow-lg"><UserPlus size={16}/> 新增夥伴</button>
+            </div>
 
-            <div className="bg-white rounded-3xl shadow-xl border border-slate-100 overflow-hidden">
-               <div className="overflow-x-auto">
-                  <table className="w-full text-left">
-                    <thead className="bg-slate-50 border-b border-slate-100">
-                      <tr>
-                        <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">基本資訊</th>
-                        <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest">職能/倍率</th>
-                        <th className="px-8 py-5 text-[10px] font-black text-slate-400 uppercase tracking-widest text-center">當前積分</th>
-                        <th className="px-8 py-5 text-right text-[10px] font-black text-slate-400 uppercase tracking-widest">操作</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-50">
-                      {employees.map(emp => (
-                        <tr key={emp.id} className="hover:bg-slate-50/50 transition-colors">
-                          <td className="px-8 py-6">
-                            <div className="font-black text-slate-800">{emp.name}</div>
-                            <div className="text-[10px] text-slate-400 font-bold uppercase">{emp.shop}</div>
-                          </td>
-                          <td className="px-8 py-6">
-                            <div className="inline-flex items-center gap-1.5 px-2 py-0.5 bg-blue-50 text-blue-600 rounded-md text-[10px] font-black uppercase">
-                              {emp.level}
-                            </div>
-                            <div className="text-[10px] font-bold text-slate-400 mt-1">倍率: {emp.multiplier.toFixed(1)}x</div>
-                          </td>
-                          <td className="px-8 py-6 text-center font-black text-slate-700 text-lg">
-                            {emp.currentPoints}
-                          </td>
-                          <td className="px-8 py-6 text-right">
-                            <div className="flex justify-end gap-1">
-                               <button onClick={() => { setEditingEmp({...emp}); setIsAddingNew(false); }} className="p-2.5 text-slate-300 hover:text-slate-800 hover:bg-white rounded-xl shadow-sm transition-all"><Edit3 size={18}/></button>
-                               <button onClick={() => setDeletingEmpId(emp.id)} className="p-2.5 text-slate-200 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"><Trash2 size={18}/></button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-               </div>
+            <div className="bg-white rounded-3xl border shadow-sm overflow-hidden">
+               <table className="w-full text-left">
+                 <thead className="bg-slate-50 text-[10px] font-black text-slate-400 uppercase tracking-widest border-b">
+                   <tr>
+                     <th className="px-6 py-4">姓名 / 店別</th>
+                     <th className="px-6 py-4">目前分數</th>
+                     <th className="px-6 py-4">獎金倍率</th>
+                     <th className="px-6 py-4 text-right">操作</th>
+                   </tr>
+                 </thead>
+                 <tbody className="divide-y">
+                   {employees.map(e => (
+                     <tr key={e.id} className="hover:bg-slate-50 transition-colors">
+                       <td className="px-6 py-4">
+                         <div className="font-black text-slate-700">{e.name}</div>
+                         <div className="text-[10px] text-slate-400 font-bold">{e.shop}</div>
+                       </td>
+                       <td className="px-6 py-4 font-black text-slate-600">{e.currentPoints}</td>
+                       <td className="px-6 py-4 font-black text-orange-600">{e.multiplier}x</td>
+                       <td className="px-6 py-4 text-right space-x-2">
+                         <button onClick={() => setEditingEmp(e)} className="p-2 text-slate-400 hover:text-slate-800"><Edit3 size={16}/></button>
+                         <button onClick={() => deleteEmployee(e.id)} className="p-2 text-slate-400 hover:text-red-500"><Trash2 size={16}/></button>
+                       </td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </table>
             </div>
           </div>
         )}
       </main>
 
-      {/* System Toast */}
+      {/* 編輯/新增視窗 */}
+      {editingEmp && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2rem] p-8 w-full max-w-md shadow-2xl animate-in zoom-in-95">
+            <h3 className="text-xl font-black mb-6 flex items-center gap-2"><UserPlus/> {editingEmp.id ? '編輯夥伴' : '新增夥伴'}</h3>
+            <form onSubmit={saveEmployee} className="space-y-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase">夥伴姓名</label>
+                <input name="name" defaultValue={editingEmp.name} required className="w-full bg-slate-50 p-4 rounded-xl font-bold border-2 border-slate-50 focus:border-slate-800 outline-none" />
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-black text-slate-400 uppercase">店別</label>
+                <input name="shop" defaultValue={editingEmp.shop} required className="w-full bg-slate-50 p-4 rounded-xl font-bold border-2 border-slate-50 focus:border-slate-800 outline-none" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase">初始分數</label>
+                  <input name="points" type="number" defaultValue={editingEmp.currentPoints || 600} required className="w-full bg-slate-50 p-4 rounded-xl font-bold border-2 border-slate-50 focus:border-slate-800 outline-none" />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] font-black text-slate-400 uppercase">獎金倍率</label>
+                  <input name="multiplier" type="number" step="0.1" defaultValue={editingEmp.multiplier || 1.0} required className="w-full bg-slate-50 p-4 rounded-xl font-bold border-2 border-slate-50 focus:border-slate-800 outline-none" />
+                </div>
+              </div>
+              <div className="flex gap-2 pt-4">
+                <button type="button" onClick={() => setEditingEmp(null)} className="flex-1 py-4 font-black text-slate-400">取消</button>
+                <button type="submit" className="flex-1 py-4 bg-slate-800 text-white rounded-xl font-black shadow-lg flex items-center justify-center gap-2"><Save size={18}/> 存檔</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 驗證視窗 */}
+      {authMode && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[200] flex items-center justify-center p-4">
+          <div className="bg-white rounded-[2.5rem] p-10 w-full max-w-sm shadow-2xl animate-in zoom-in-95">
+              <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 mx-auto mb-4"><Lock size={32} /></div>
+              <h3 className="text-2xl font-black text-center mb-6">身分驗證</h3>
+              <input type={showPassword ? "text" : "password"} autoFocus placeholder="請輸入密碼" value={passwordInput} onChange={e => setPasswordInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAuth()} className="w-full text-center text-2xl py-5 bg-slate-50 border-2 rounded-3xl font-black outline-none focus:border-orange-500 mb-6 tracking-widest" />
+              <div className="flex gap-3">
+                <button onClick={() => setAuthMode(null)} className="flex-1 py-4 font-black text-slate-400">取消</button>
+                <button onClick={handleAuth} className="flex-1 py-4 bg-orange-600 text-white rounded-2xl font-black shadow-lg active:scale-95 transition-all">驗證</button>
+              </div>
+          </div>
+        </div>
+      )}
+
+      {/* 系統訊息 */}
       {systemMessage && (
-        <div className={`fixed bottom-24 left-1/2 -translate-x-1/2 z-[500] px-6 py-3 rounded-2xl shadow-2xl font-bold flex items-center gap-2 animate-bounce border ${systemMessage.type === 'error' ? 'bg-red-50 border-red-200 text-red-600' : systemMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-slate-800 text-white'}`}>
+        <div className={`fixed bottom-10 left-1/2 -translate-x-1/2 z-[500] px-6 py-3 rounded-2xl shadow-2xl font-bold flex items-center gap-2 animate-bounce border ${systemMessage.type === 'error' ? 'bg-red-50 border-red-200 text-red-600' : systemMessage.type === 'success' ? 'bg-emerald-50 border-emerald-200 text-emerald-600' : 'bg-slate-800 text-white'}`}>
           {systemMessage.text}
         </div>
       )}
-
-      {/* Auth Modal */}
-      {authMode && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[300] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2.5rem] p-10 w-full max-w-sm shadow-2xl animate-in zoom-in-95 duration-200">
-              <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center text-slate-400 mx-auto mb-6">
-                <Lock size={32} />
-              </div>
-              <h3 className="text-2xl font-black text-center mb-1 text-slate-800">身分驗證</h3>
-              <p className="text-[10px] text-slate-400 text-center mb-8 font-black uppercase tracking-widest">
-                {authMode === 'manager' ? 'MANAGER ACCESS' : 'ADMINISTRATOR ACCESS'}
-              </p>
-              
-              <div className="relative mb-8">
-                <input 
-                  type={showPassword ? "text" : "password"} 
-                  autoFocus 
-                  placeholder="請輸入存取密碼"
-                  value={passwordInput} 
-                  onChange={(e) => setPasswordInput(e.target.value)} 
-                  onKeyDown={(e) => e.key === 'Enter' && handleAuth()} 
-                  className="w-full text-center text-2xl py-5 bg-slate-50 border-2 border-slate-200 rounded-3xl font-black outline-none focus:border-orange-500 focus:bg-white transition-all tracking-widest placeholder:text-slate-200 placeholder:tracking-normal placeholder:font-bold" 
-                />
-                <button 
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-5 top-1/2 -translate-y-1/2 text-slate-300 hover:text-slate-500 transition-colors"
-                >
-                  {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-                </button>
-              </div>
-
-              <div className="flex gap-3">
-                <button onClick={() => {setAuthMode(null); setPasswordInput('');}} className="flex-1 py-4 font-black text-slate-400 hover:text-slate-800 transition-colors">取消</button>
-                <button onClick={handleAuth} className="flex-1 py-4 bg-orange-600 text-white font-black rounded-2xl shadow-xl shadow-orange-100 hover:bg-orange-700 active:scale-95 transition-all">確認驗證</button>
-              </div>
-          </div>
-        </div>
-      )}
-
-      {/* Editing Modal */}
-      {editingEmp && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-[300] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[3rem] w-full max-w-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-             <div className="p-8 bg-slate-900 text-white flex justify-between items-center shrink-0">
-                <div className="flex items-center gap-3">
-                  <Award className="text-orange-400" />
-                  <h3 className="font-black text-2xl">{isAddingNew ? '註冊新夥伴' : '編輯夥伴資料'}</h3>
-                </div>
-                <button onClick={() => { setEditingEmp(null); setIsAddingNew(false); }} className="hover:rotate-90 transition-all duration-300 opacity-60 hover:opacity-100"><X size={24}/></button>
-             </div>
-             <div className="p-6 md:p-10 grid grid-cols-1 md:grid-cols-2 gap-6 overflow-y-auto custom-scrollbar">
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">夥伴姓名</label>
-                  <input type="text" placeholder="輸入姓名" value={editingEmp.name} onChange={(e) => setEditingEmp({...editingEmp, name: e.target.value})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-2 border-slate-50 font-bold focus:border-orange-500 focus:bg-white outline-none" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">所屬門市</label>
-                  <input type="text" placeholder="輸入門市名稱" value={editingEmp.shop} onChange={(e) => setEditingEmp({...editingEmp, shop: e.target.value})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-2 border-slate-50 font-bold focus:border-orange-500 focus:bg-white outline-none" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">到職日期</label>
-                  <input type="date" value={editingEmp.startDate} onChange={(e) => setEditingEmp({...editingEmp, startDate: e.target.value})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-2 border-slate-50 font-bold focus:border-orange-500 focus:bg-white outline-none" />
-                </div>
-                <div className="space-y-1">
-                  <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">年度初始積分</label>
-                  <input type="number" value={editingEmp.initialPoints} onChange={(e) => setEditingEmp({...editingEmp, initialPoints: parseInt(e.target.value) || 0})} className="w-full px-5 py-4 bg-slate-50 rounded-2xl border-2 border-slate-50 font-black focus:border-orange-500 focus:bg-white outline-none" />
-                </div>
-                
-                <div className="md:col-span-2 space-y-4 bg-orange-50/50 p-6 rounded-3xl border border-orange-100">
-                   <div className="flex items-center gap-2 font-black text-orange-600 text-sm">
-                      <GraduationCap size={18} /> 職能與獎勵倍率
-                   </div>
-                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <select 
-                        value={editingEmp.skillsPassed} 
-                        onChange={(e) => {
-                          const skills = parseInt(e.target.value);
-                          const { level, defaultMult } = getLevelAndMultiplierBySkills(skills);
-                          setEditingEmp({...editingEmp, skillsPassed: skills, level: level, multiplier: defaultMult});
-                        }}
-                        className="w-full px-5 py-4 bg-white rounded-2xl border-2 border-orange-100 text-orange-700 font-black focus:outline-none"
-                      >
-                        {[0,1,2,3].map(n => <option key={n} value={n}>{n} 關技術通過</option>)}
-                      </select>
-                      <div className="flex flex-col justify-center gap-2 px-2">
-                        <div className="flex justify-between items-center text-[10px] font-black text-orange-400">
-                           <span>倍率手動調整</span>
-                           <span>{editingEmp.multiplier.toFixed(1)}x</span>
-                        </div>
-                        <input type="range" min="0" max="2" step="0.1" value={editingEmp.multiplier} onChange={(e) => setEditingEmp({...editingEmp, multiplier: parseFloat(e.target.value)})} className="w-full accent-orange-600" />
-                      </div>
-                   </div>
-                </div>
-
-                <div className="md:col-span-2 bg-slate-50 p-5 rounded-2xl flex items-center justify-between">
-                   <div className="flex items-center gap-3">
-                      <AlertTriangle size={20} className="text-slate-400" />
-                      <div className="text-xs font-bold text-slate-500 leading-tight">去年考核是否低於 A 級？<br/><span className="text-[10px] opacity-60">此項將影響 D 級淘汰判定</span></div>
-                   </div>
-                   <button 
-                     onClick={() => setEditingEmp({...editingEmp, lastYearLow: !editingEmp.lastYearLow})}
-                     className={`w-14 h-8 rounded-full relative transition-all ${editingEmp.lastYearLow ? 'bg-orange-500' : 'bg-slate-200'}`}
-                   >
-                     <div className={`absolute top-1 w-6 h-6 bg-white rounded-full transition-all ${editingEmp.lastYearLow ? 'left-7' : 'left-1'}`} />
-                   </button>
-                </div>
-
-                <div className="col-span-1 md:col-span-2 pt-4">
-                  <button 
-                    onClick={handleSaveEmpEdit} 
-                    className="w-full py-5 bg-slate-900 text-white rounded-2xl font-black text-lg shadow-xl hover:bg-slate-800 active:scale-95 transition-all flex items-center justify-center gap-2"
-                  >
-                    <CheckCircle2 /> 同步至雲端資料庫
-                  </button>
-                </div>
-             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Delete Confirmation Modals */}
-      {deletingEmpId && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[500] flex items-center justify-center p-4">
-           <div className="bg-white rounded-3xl p-10 w-full max-w-sm text-center">
-              <div className="w-20 h-20 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
-                 <Trash2 size={40} />
-              </div>
-              <h3 className="text-2xl font-black mb-2">確認移除人員？</h3>
-              <p className="text-sm text-slate-400 mb-8 font-medium">移除後該夥伴所有雲端數據將永久消失。</p>
-              <div className="flex gap-3">
-                 <button onClick={() => setDeletingEmpId(null)} className="flex-1 py-4 font-black text-slate-400">取消</button>
-                 <button onClick={() => handleDeleteEmp(deletingEmpId)} className="flex-1 py-4 bg-red-500 text-white font-black rounded-2xl shadow-lg">確認刪除</button>
-              </div>
-           </div>
-        </div>
-      )}
-
-      {deletingLogId && (
-        <div className="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[500] flex items-center justify-center p-4">
-           <div className="bg-white rounded-3xl p-10 w-full max-w-sm text-center">
-              <div className="w-16 h-16 bg-red-50 text-red-500 rounded-full flex items-center justify-center mx-auto mb-6">
-                 <X size={32} />
-              </div>
-              <h3 className="text-xl font-black mb-2">撤銷評分紀錄？</h3>
-              <p className="text-sm text-slate-400 mb-8 font-medium">確認後將會還原對應的點數變動。</p>
-              <div className="flex gap-3">
-                 <button onClick={() => setDeletingLogId(null)} className="flex-1 py-4 font-black text-slate-400">取消</button>
-                 <button onClick={() => handleDeleteLog(deletingLogId)} className="flex-1 py-4 bg-red-500 text-white font-black rounded-2xl shadow-lg">確認撤銷</button>
-              </div>
-           </div>
-        </div>
-      )}
-
-      <style dangerouslySetInnerHTML={{ __html: `
-        .scrollbar-hide::-webkit-scrollbar { display: none; }
-        .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
-      `}} />
     </div>
   );
 };
