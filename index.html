@@ -4,33 +4,38 @@ import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken }
 import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, deleteDoc, updateDoc } from 'firebase/firestore';
 import { Award, User, CalendarSearch, Activity, Edit3, History, Users, ScrollText, Search, Plus, Minus, Trash2, Edit, AlertTriangle, UserX, ChevronRight, SearchX, Info, TrendingDown, CheckCircle2, AlertCircle, XCircle, MapPin, Loader2 } from 'lucide-react';
 
-// --- 安全初始化 Firebase ---
-// 在 Vercel 環境中，你可以手動將設定填入下面的物件，或者保持為空。
-// 如果是空物件，系統會顯示提示而非崩潰。
-const getFirebaseConfig = () => {
-    try {
-        if (typeof __firebase_config !== 'undefined') return JSON.parse(__firebase_config);
-    } catch (e) {}
-    
-    // 如果你有自己的 Firebase 配置，請填寫在此處：
-    return {
-        apiKey: "",
-        authDomain: "",
-        projectId: "",
-        storageBucket: "",
-        messagingSenderId: "",
-        appId: ""
-    };
+/**
+ * --- 重要：Firebase 配置區 ---
+ * 如果您是在 Vercel 部署，請將您在 Firebase 控制台取得的資訊填入下方。
+ */
+const firebaseConfig = {
+    apiKey: "", // 填入您的 API Key
+    authDomain: "", // 填入您的 Auth Domain
+    projectId: "", // 填入您的 Project ID
+    storageBucket: "",
+    messagingSenderId: "",
+    appId: ""
 };
 
-const firebaseConfig = getFirebaseConfig();
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'performance-tracker-v1';
+// --- 自動偵測環境變數 ---
+const getEffectiveConfig = () => {
+    try {
+        // 優先使用系統注入的配置 (Canvas 預覽環境)
+        if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+            return JSON.parse(__firebase_config);
+        }
+    } catch (e) {}
+    return firebaseConfig; // 否則使用手動填寫的配置 (Vercel 環境)
+};
 
-// 初始化 (加上 try-catch 防止配置不全導致崩潰)
+const finalConfig = getEffectiveConfig();
+const finalAppId = typeof __app_id !== 'undefined' ? __app_id : 'performance-tracker-v1';
+
+// 初始化
 let app, auth, db;
 try {
-    if (firebaseConfig.apiKey) {
-        app = initializeApp(firebaseConfig);
+    if (finalConfig && finalConfig.apiKey) {
+        app = initializeApp(finalConfig);
         auth = getAuth(app);
         db = getFirestore(app);
     }
@@ -63,9 +68,8 @@ export default function App() {
     const [loading, setLoading] = useState(true);
     const [employees, setEmployees] = useState([]);
     const [logs, setLogs] = useState([]);
-    const [isConfigMissing, setIsConfigMissing] = useState(!firebaseConfig.apiKey);
+    const [isConfigMissing, setIsConfigMissing] = useState(!finalConfig || !finalConfig.apiKey);
     
-    // UI 狀態
     const [activeTab, setActiveTab] = useState('employee');
     const [selectedEmpId, setSelectedEmpId] = useState('');
     const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
@@ -80,7 +84,7 @@ export default function App() {
     const [isAddingNew, setIsAddingNew] = useState(false);
     const [empToDelete, setEmpToDelete] = useState(null);
 
-    // 1. 身份驗證
+    // 1. 身份驗證 (遵守 RULE 3)
     useEffect(() => {
         if (isConfigMissing || !auth) {
             setLoading(false);
@@ -105,24 +109,27 @@ export default function App() {
         return () => unsubscribe();
     }, [isConfigMissing]);
 
-    // 2. 數據監聽
+    // 2. 數據監聽 (遵守 RULE 1 & 2)
     useEffect(() => {
         if (!user || !db) return;
 
-        const empRef = collection(db, 'artifacts', appId, 'public', 'data', 'employees');
+        const empRef = collection(db, 'artifacts', finalAppId, 'public', 'data', 'employees');
         const unsubEmp = onSnapshot(empRef, (snapshot) => {
             const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setEmployees(data);
             if (data.length > 0 && !selectedEmpId) {
                 setSelectedEmpId(data[0].id);
             }
-        }, (err) => console.error("Firestore Error:", err));
+        }, (err) => {
+            console.error("Firestore Emp Error:", err);
+            showMessage("讀取資料失敗，請檢查權限設定");
+        });
 
-        const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'logs');
+        const logsRef = collection(db, 'artifacts', finalAppId, 'public', 'data', 'logs');
         const unsubLogs = onSnapshot(logsRef, (snapshot) => {
             const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setLogs(data);
-        });
+        }, (err) => console.error("Firestore Logs Error:", err));
 
         return () => {
             unsubEmp();
@@ -135,12 +142,11 @@ export default function App() {
         setTimeout(() => setSystemMessage(null), 2500);
     };
 
-    // 輔助函式
     const getPartnerInfo = (skills) => {
         const s = Number(skills) || 1;
-        if (s >= 3) return { level: "全能夥伴", multiplierRange: "1.3 ~ 1.5", color: "text-purple-600", bg: "bg-purple-50" };
-        if (s === 2) return { level: "熟練夥伴", multiplierRange: "1.0 ~ 1.3", color: "text-blue-600", bg: "bg-blue-50" };
-        return { level: "一般夥伴", multiplierRange: "0 (不啟動)", color: "text-gray-500", bg: "bg-gray-50" };
+        if (s >= 3) return { level: "全能夥伴", color: "text-purple-600", bg: "bg-purple-50" };
+        if (s === 2) return { level: "熟練夥伴", color: "text-blue-600", bg: "bg-blue-50" };
+        return { level: "一般夥伴", color: "text-gray-500", bg: "bg-gray-50" };
     };
 
     const getPerformanceResult = (points) => {
@@ -150,7 +156,6 @@ export default function App() {
         return { grade: "重罰 (C)", color: "text-red-600", bg: "bg-red-50", icon: <XCircle size={16}/> };
     };
 
-    // 操作函式
     const handleAddScore = async () => {
         if (!user || !selectedEmpId) return;
         if (!selectedItemLabel || !note) { showMessage("⚠️ 請填寫原因與備註"); return; }
@@ -160,7 +165,7 @@ export default function App() {
         if (!emp) return;
 
         try {
-            const logRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'));
+            const logRef = doc(collection(db, 'artifacts', finalAppId, 'public', 'data', 'logs'));
             await setDoc(logRef, {
                 empId: selectedEmpId,
                 occurrenceDate,
@@ -170,7 +175,7 @@ export default function App() {
                 createdAt: Date.now()
             });
 
-            const empRef = doc(db, 'artifacts', appId, 'public', 'data', 'employees', selectedEmpId);
+            const empRef = doc(db, 'artifacts', finalAppId, 'public', 'data', 'employees', selectedEmpId);
             await updateDoc(empRef, {
                 currentPoints: (emp.currentPoints || 600) + scoreValue
             });
@@ -188,7 +193,7 @@ export default function App() {
         if (!user || !editingEmp) return;
         try {
             const empIdStr = isAddingNew ? `emp_${Date.now()}` : editingEmp.id;
-            const empRef = doc(db, 'artifacts', appId, 'public', 'data', 'employees', empIdStr);
+            const empRef = doc(db, 'artifacts', finalAppId, 'public', 'data', 'employees', empIdStr);
             await setDoc(empRef, {
                 ...editingEmp,
                 id: empIdStr,
@@ -202,8 +207,20 @@ export default function App() {
         }
     };
 
-    // 數據計算
-    const selectedEmp = employees.find(e => e.id === selectedEmpId) || { name: '請選擇', currentPoints: 600, skillsPassed: 1 };
+    const handleDeleteEmployee = async () => {
+        if (!user || !empToDelete) return;
+        try {
+            const empRef = doc(db, 'artifacts', finalAppId, 'public', 'data', 'employees', empToDelete.id);
+            await deleteDoc(empRef);
+            setEmpToDelete(null);
+            showMessage("🗑️ 夥伴已刪除");
+            if (selectedEmpId === empToDelete.id) setSelectedEmpId('');
+        } catch (error) {
+            showMessage("❌ 刪除失敗");
+        }
+    };
+
+    const selectedEmp = employees.find(e => e.id === selectedEmpId) || { name: '請選擇', currentPoints: 600, skillsPassed: 1, shop: '未載入' };
     const empPartnerInfo = getPartnerInfo(selectedEmp.skillsPassed);
     const empPerfInfo = getPerformanceResult(selectedEmp.currentPoints);
     
@@ -223,25 +240,27 @@ export default function App() {
         return options;
     }, []);
 
-    if (loading) return <div className="flex h-screen items-center justify-center font-black text-gray-400"><Loader2 className="animate-spin mr-2" /> 連線中...</div>;
+    if (loading) return <div className="flex h-screen items-center justify-center font-black text-gray-400 bg-white"><Loader2 className="animate-spin mr-2" /> 連線雲端資料庫中...</div>;
 
     if (isConfigMissing) return (
-        <div className="p-10 text-center space-y-4">
-            <AlertTriangle className="mx-auto text-orange-500" size={48} />
-            <h1 className="text-xl font-black">Firebase 配置缺失</h1>
-            <p className="text-gray-500 text-sm">請在代碼中的 `getFirebaseConfig` 填入您的 Firebase 設定值才能在 Vercel 運作。</p>
+        <div className="min-h-screen flex items-center justify-center bg-gray-50 p-10">
+            <div className="bg-white p-8 rounded-[2rem] shadow-xl text-center space-y-4 max-w-sm border-2 border-orange-100">
+                <AlertTriangle className="mx-auto text-orange-500" size={60} />
+                <h1 className="text-2xl font-black text-gray-800">Firebase 配置缺失</h1>
+                <p className="text-gray-500 text-sm leading-relaxed">偵測到您正在 Vercel 或外部環境執行。請在程式碼最上方的 `firebaseConfig` 填入您的 API 資訊，系統才能正常運作。</p>
+                <div className="text-[10px] bg-gray-100 p-2 rounded text-left font-mono overflow-auto max-h-24">
+                    取得方式：Firebase Console {'->'} 專案設定 {'->'} 您的應用程式 {'->'} 設定
+                </div>
+            </div>
         </div>
     );
 
     return (
-        <div className="min-h-screen pb-20 bg-gray-50 text-[14px] font-sans selection:bg-orange-100 selection:text-orange-900">
-            {/* 導覽列 */}
+        <div className="min-h-screen pb-20 bg-gray-50 text-[14px] font-sans">
             <nav className="bg-white/80 backdrop-blur-md border-b sticky top-0 z-40 px-4 py-3 flex flex-col gap-3 shadow-sm md:flex-row md:justify-between md:items-center">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveTab('employee')}>
-                        <div className="w-9 h-9 bg-black rounded-xl flex items-center justify-center text-white shadow-lg">
-                            <Award size={20} />
-                        </div>
+                        <div className="w-9 h-9 bg-black rounded-xl flex items-center justify-center text-white shadow-lg"><Award size={20} /></div>
                         <span className="font-black text-xl tracking-tight text-gray-800">夥伴考核系統</span>
                     </div>
                 </div>
@@ -253,13 +272,12 @@ export default function App() {
             </nav>
 
             <main className="max-w-md mx-auto p-4 space-y-6">
-                {/* 顯示內容區 (與先前邏輯一致) */}
                 {activeTab === 'employee' && (
-                    <div className="space-y-4 animate-in fade-in">
+                    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
                         <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                            {employees.map(e => (
+                            {employees.length > 0 ? employees.map(e => (
                                 <button key={e.id} onClick={() => setSelectedEmpId(e.id)} className={`px-5 py-2.5 rounded-full whitespace-nowrap text-xs font-black border transition-all ${selectedEmpId === e.id ? 'bg-black text-white shadow-xl scale-105 border-black' : 'bg-white text-gray-400 border-gray-200'}`}>{e.name}</button>
-                            ))}
+                            )) : <div className="text-gray-300 italic text-xs py-2">目前尚無資料...</div>}
                         </div>
 
                         <div className="bg-white rounded-[2.5rem] overflow-hidden shadow-2xl border border-gray-100">
@@ -271,7 +289,7 @@ export default function App() {
                             
                             <div className="p-6 grid grid-cols-2 gap-3">
                                 <div className="bg-gray-50 p-5 rounded-3xl text-center border border-gray-100">
-                                    <div className="text-[10px] font-black text-gray-400 mb-1 uppercase tracking-tighter">年度總積分</div>
+                                    <div className="text-[10px] font-black text-gray-400 mb-1 uppercase">年度總積分</div>
                                     <div className="text-4xl font-black text-gray-800">{selectedEmp.currentPoints}</div>
                                 </div>
                                 <div className={`${empPerfInfo.bg} p-5 rounded-3xl text-center border border-gray-100 flex flex-col justify-center`}>
@@ -308,19 +326,21 @@ export default function App() {
                     </div>
                 )}
 
-                {/* 評分與管理介面 */}
                 {activeTab === 'manager' && (
-                    <section className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-orange-50 space-y-4">
-                        <h2 className="font-black text-xl text-orange-600 flex items-center gap-2"><Edit3 />店長評分</h2>
-                        <select value={selectedEmpId || ''} onChange={e => setSelectedEmpId(e.target.value)} className="w-full p-4 bg-gray-50 border rounded-2xl font-black text-sm outline-none">
+                    <section className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-orange-50 space-y-4 animate-in fade-in">
+                        <div className="flex justify-between items-center mb-2">
+                            <h2 className="font-black text-xl text-orange-600 flex items-center gap-2"><Edit3 />店長評分</h2>
+                            <input type="date" value={occurrenceDate || ''} onChange={e => setOccurrenceDate(e.target.value)} className="text-[10px] font-black bg-gray-50 p-2 rounded-xl" />
+                        </div>
+                        <select value={selectedEmpId || ''} onChange={e => setSelectedEmpId(e.target.value)} className="w-full p-4 bg-gray-50 border rounded-2xl font-black text-sm outline-none focus:border-orange-500">
                             <option value="">-- 選擇夥伴 --</option>
-                            {employees.map(e => <option key={e.id} value={e.id}>{e.name}</option>)}
+                            {employees.map(e => <option key={e.id} value={e.id}>{e.name} ({e.shop})</option>)}
                         </select>
                         <select value={selectedItemLabel || ''} onChange={e => {
                             setSelectedItemLabel(e.target.value);
                             const item = [...PERFORMANCE_ITEMS.penalty, ...PERFORMANCE_ITEMS.bonus].find(i => i.label === e.target.value);
                             if (item) setCustomPoints(item.val);
-                        }} className="w-full p-4 bg-gray-50 border rounded-2xl font-black text-sm outline-none">
+                        }} className="w-full p-4 bg-gray-50 border rounded-2xl font-black text-sm outline-none focus:border-orange-500">
                             <option value="">-- 選擇考核項目 --</option>
                             <optgroup label="🔴 扣分項目">
                                 {PERFORMANCE_ITEMS.penalty.map(i => <option key={i.label} value={i.label}>{i.label}</option>)}
@@ -329,21 +349,20 @@ export default function App() {
                                 {PERFORMANCE_ITEMS.bonus.map(i => <option key={i.label} value={i.label}>{i.label}</option>)}
                             </optgroup>
                         </select>
-                        <textarea placeholder="備註..." value={note || ''} onChange={e => setNote(e.target.value)} className="w-full h-20 p-4 bg-gray-50 border rounded-2xl font-bold text-sm outline-none resize-none" />
-                        <button onClick={handleAddScore} className="w-full py-5 bg-orange-600 text-white rounded-[2rem] font-black text-lg">確認送出評分</button>
+                        <textarea placeholder="具體備註原因..." value={note || ''} onChange={e => setNote(e.target.value)} className="w-full h-20 p-4 bg-gray-50 border rounded-2xl font-bold text-sm outline-none resize-none focus:border-orange-500" />
+                        <button onClick={handleAddScore} className="w-full py-5 bg-orange-600 text-white rounded-[2rem] font-black text-lg active:scale-[0.98] transition-all shadow-lg shadow-orange-100">確認送出評分</button>
                     </section>
                 )}
 
-                {/* 管理模式 */}
                 {activeTab === 'admin' && (
-                    <section className="bg-white p-7 rounded-[2.5rem] shadow-xl border border-red-50">
+                    <section className="bg-white p-7 rounded-[2.5rem] shadow-xl border border-red-50 animate-in fade-in">
                         <div className="flex justify-between items-center mb-6">
                             <h2 className="font-black text-xl flex items-center gap-2 text-red-600"><Users />夥伴管理</h2>
                             <button onClick={() => { setIsAddingNew(true); setEditingEmp({ name: '', shop: '西螺文昌店', skillsPassed: 1, currentPoints: 600 }); }} className="bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-black">+ 新增</button>
                         </div>
                         <div className="space-y-3">
                             {employees.map(e => (
-                                <div key={e.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl border">
+                                <div key={e.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl border border-gray-100">
                                     <div className="font-black text-sm">{e.name} <span className="text-[10px] bg-gray-200 px-1.5 py-0.5 rounded ml-2">{e.shop}</span></div>
                                     <div className="flex gap-1">
                                         <button onClick={() => { setEditingEmp(e); setIsAddingNew(false); }} className="p-2 text-blue-500"><Edit size={16}/></button>
@@ -356,34 +375,46 @@ export default function App() {
                 )}
             </main>
 
-            {/* 編輯夥伴彈窗 */}
             {editingEmp && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-md">
-                    <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl space-y-5">
+                    <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl space-y-5 animate-in zoom-in-95 duration-200">
                         <h4 className="font-black text-center text-lg">{isAddingNew ? '✨ 新增夥伴' : '📝 修改夥伴'}</h4>
                         <div className="space-y-4">
                             <input placeholder="店點名稱" type="text" value={editingEmp.shop || ''} onChange={e => setEditingEmp({...editingEmp, shop: e.target.value})} className="w-full p-4 bg-gray-50 border rounded-2xl font-black outline-none" />
                             <input placeholder="姓名" type="text" value={editingEmp.name || ''} onChange={e => setEditingEmp({...editingEmp, name: e.target.value})} className="w-full p-4 bg-gray-50 border rounded-2xl font-black outline-none" />
                             <select value={editingEmp.skillsPassed || 1} onChange={e => setEditingEmp({...editingEmp, skillsPassed: Number(e.target.value)})} className="w-full p-4 bg-gray-50 border rounded-2xl font-black outline-none">
-                                <option value={1}>1 關</option>
-                                <option value={2}>2 關</option>
-                                <option value={3}>3 關以上</option>
+                                <option value={1}>1 關 (一般夥伴)</option>
+                                <option value={2}>2 關 (熟練夥伴)</option>
+                                <option value={3}>3 關以上 (全能夥伴)</option>
                             </select>
                         </div>
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 pt-2">
                             <button onClick={() => setEditingEmp(null)} className="flex-1 py-4 bg-gray-100 text-gray-400 rounded-2xl font-black">取消</button>
-                            <button onClick={handleSaveEmployee} className="flex-2 py-4 bg-black text-white rounded-2xl font-black">儲存</button>
+                            <button onClick={handleSaveEmployee} className="flex-2 py-4 bg-black text-white rounded-2xl font-black">儲存資料</button>
                         </div>
                     </div>
                 </div>
             )}
 
-            {/* 密碼驗證 */}
+            {empToDelete && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm">
+                    <div className="bg-white w-full max-w-xs rounded-[2rem] p-8 text-center space-y-4 shadow-2xl border-4 border-red-50">
+                        <AlertTriangle className="mx-auto text-red-500" size={40} />
+                        <h3 className="font-black text-xl">確定刪除 {empToDelete.name}？</h3>
+                        <p className="text-gray-400 text-xs font-bold leading-relaxed">此操作無法復原。所有與該夥伴關聯的評分紀錄將會失去關聯。</p>
+                        <div className="flex gap-3 mt-4">
+                            <button onClick={() => setEmpToDelete(null)} className="flex-1 py-4 bg-gray-100 text-gray-400 rounded-2xl font-black">取消</button>
+                            <button onClick={handleDeleteEmployee} className="flex-1 py-4 bg-red-600 text-white rounded-2xl font-black shadow-lg">刪除</button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {authMode && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/70 backdrop-blur-md">
                     <div className="bg-white w-full max-w-xs rounded-[2.5rem] p-10 shadow-2xl text-center">
                         <h4 className="font-black mb-6 text-gray-800 uppercase text-xs">輸入權限密碼</h4>
-                        <input autoFocus type="password" value={passwordInput || ''} onChange={e => setPasswordInput(e.target.value)} className="w-full bg-gray-50 border-2 rounded-2xl px-4 py-5 font-black text-center text-3xl mb-8 outline-none tracking-[0.5em]" />
+                        <input autoFocus type="password" value={passwordInput || ''} onChange={e => setPasswordInput(e.target.value)} className="w-full bg-gray-50 border-2 rounded-2xl px-4 py-5 font-black text-center text-3xl mb-8 outline-none tracking-[0.5em] focus:border-black" />
                         <div className="flex gap-3">
                             <button onClick={() => { setAuthMode(null); setPasswordInput(''); }} className="flex-1 py-4 bg-gray-100 text-gray-400 rounded-2xl font-black">返回</button>
                             <button onClick={() => {
@@ -395,9 +426,8 @@ export default function App() {
                 </div>
             )}
 
-            {/* 通知系統 */}
             {systemMessage && (
-                <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[1000] bg-gray-900 text-white px-8 py-3 rounded-full font-black text-xs animate-in fade-in slide-in-from-bottom-2">
+                <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[1000] bg-gray-900 text-white px-8 py-3 rounded-full font-black text-xs animate-in fade-in slide-in-from-bottom-2 duration-300">
                     {systemMessage}
                 </div>
             )}
