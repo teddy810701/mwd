@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { db } from './firebase.js'; 
-import { collection, addDoc, onSnapshot, query, orderBy } from "firebase/firestore";
+import { collection, addDoc, onSnapshot, query, orderBy, deleteDoc, doc } from "firebase/firestore";
 import { 
-  Users, History, Star, Clock, ChevronRight, Store, TrendingUp, AlertTriangle, ShieldCheck, DollarSign, Settings, Calendar, UserPlus, Trash2, Edit3, Save, X, ArrowLeft, KeyRound, FileText, Info, Check, UserCheck, Briefcase, ThumbsUp, ThumbsDown, Coffee, Heart, ListChecks, Filter, ArrowUpRight, ArrowDownRight, Target, RotateCcw, BarChart3, Search, PlusCircle, MinusCircle 
+  Users, PlusCircle, MinusCircle, TrendingUp, AlertTriangle, 
+  ShieldCheck, DollarSign, History, Settings, ChevronRight, 
+  Calendar, Store, UserPlus, Trash2, Edit3, Save, X, 
+  Clock, Check, Star, Coffee, ListChecks, Filter, Target, BarChart3
 } from 'lucide-react';
 
 export default function App() {
   const [records, setRecords] = useState([]);
-  const [activeTab, setActiveTab] = useState('西螺文昌店');
+  const [activeTab, setActiveTab] = useState('西螺文昌店'); // 預設顯示西螺店
 
-  // 從 Firebase 即時同步數據
+  // --- 1. 從雲端即時讀取資料 ---
   useEffect(() => {
     const q = query(collection(db, "mwd_records"), orderBy("timestamp", "desc"));
     const unsubscribe = onSnapshot(q, (querySnapshot) => {
@@ -22,16 +25,35 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // --- 2. 初始配置與考核項目 ---
+  const DEFAULT_INITIAL_POINTS = 600;
+  const PERFORMANCE_ITEMS = {
+    penalty: [
+      { label: '遲到 (預設1分/可修改)', val: -1 },
+      { label: '延遲開工 (15分以上)', val: -10 },
+      { label: '工作態度不佳', val: -5 },
+      { label: '作業失誤-輕', val: -2 },
+      { label: '作業失誤-重 (燒焦/客訴)', val: -5 }
+    ],
+    bonus: [
+      { label: '申請打掃環境', val: 2 },
+      { label: '支援另一間店', val: 1 },
+      { label: '獲得顧客五星評論', val: 2 },
+      { label: '表現優異 (店長推薦)', val: 5 }
+    ]
+  };
+
+  // --- 3. 畫面渲染 ---
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
       <div className="max-w-4xl mx-auto bg-white rounded-3xl shadow-xl overflow-hidden">
-        {/* 店鋪切換頁籤 */}
+        {/* 店鋪切換 */}
         <div className="flex bg-gray-100 p-2 gap-2">
           {['西螺文昌店', '斗南站前店'].map(shop => (
             <button 
               key={shop}
               onClick={() => setActiveTab(shop)}
-              className={`flex-1 py-3 rounded-2xl font-bold transition ${activeTab === shop ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-400'}`}
+              className={`flex-1 py-3 rounded-2xl font-bold transition ${activeTab === shop ? 'bg-orange-500 text-white shadow-lg' : 'text-gray-500'}`}
             >
               {shop}
             </button>
@@ -42,7 +64,7 @@ export default function App() {
         <div className="p-6">
           <div className="flex items-center gap-2 mb-6 text-orange-600">
             <History size={24} />
-            <h2 className="text-xl font-bold">雲端即時考核紀錄</h2>
+            <h2 className="text-xl font-bold">雲端考核紀錄彙整</h2>
           </div>
           
           <div className="overflow-x-auto">
@@ -70,9 +92,6 @@ export default function App() {
                 ))}
               </tbody>
             </table>
-            {records.filter(r => r.store === activeTab).length === 0 && (
-              <div className="text-center py-10 text-gray-400">尚無雲端紀錄</div>
-            )}
           </div>
         </div>
       </div>
