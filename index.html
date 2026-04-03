@@ -1,436 +1,232 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, deleteDoc, updateDoc } from 'firebase/firestore';
-import { Award, User, CalendarSearch, Activity, Edit3, History, Users, ScrollText, Search, Plus, Minus, Trash2, Edit, AlertTriangle, UserX, ChevronRight, SearchX, Info, TrendingDown, CheckCircle2, AlertCircle, XCircle, MapPin, Loader2 } from 'lucide-react';
+import { 
+  getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken 
+} from 'firebase/auth';
+import { 
+  getFirestore, doc, setDoc, getDoc, collection, query, onSnapshot, 
+  deleteDoc, updateDoc, where, getDocs, increment 
+} from 'firebase/firestore';
 
-/**
- * --- 重要：Firebase 配置區 ---
- * 如果您是在 Vercel 部署，請將您在 Firebase 控制台取得的資訊填入下方。
- */
-const firebaseConfig = {
-    apiKey: "", // 填入您的 API Key
-    authDomain: "", // 填入您的 Auth Domain
-    projectId: "", // 填入您的 Project ID
-    storageBucket: "",
-    messagingSenderId: "",
-    appId: ""
-};
-
-// --- 自動偵測環境變數 ---
-const getEffectiveConfig = () => {
-    try {
-        // 優先使用系統注入的配置 (Canvas 預覽環境)
-        if (typeof __firebase_config !== 'undefined' && __firebase_config) {
-            return JSON.parse(__firebase_config);
-        }
-    } catch (e) {}
-    return firebaseConfig; // 否則使用手動填寫的配置 (Vercel 環境)
-};
-
-const finalConfig = getEffectiveConfig();
-const finalAppId = typeof __app_id !== 'undefined' ? __app_id : 'performance-tracker-v1';
-
-// 初始化
-let app, auth, db;
-try {
-    if (finalConfig && finalConfig.apiKey) {
-        app = initializeApp(finalConfig);
-        auth = getAuth(app);
-        db = getFirestore(app);
-    }
-} catch (e) {
-    console.error("Firebase 初始化失敗:", e);
-}
-
-const PERFORMANCE_ITEMS = {
-    penalty: [
-        { label: '遲到 (每分鐘-1)', val: -1 },
-        { label: '延遲開工 (15分以上)', val: -10 },
-        { label: '工作態度不佳 (不服管教)', val: -5 },
-        { label: '作業失誤-輕 (漏餐具等)', val: -2 },
-        { label: '作業失誤-重 (燒焦/客訴)', val: -5 },
-        { label: '環境責任 (收班不確實)', val: -3 },
-        { label: '服儀不整', val: -2 },
-        { label: '其他扣分事項', val: -1 }
-    ],
-    bonus: [
-        { label: '申請打掃環境', val: 2 },
-        { label: '支援另一間店', val: 1 },
-        { label: '獲得顧客五星評論', val: 2 },
-        { label: '表現優異 (店長推薦)', val: 5 },
-        { label: '其他加分事項', val: 1 }
-    ]
-};
+// Firebase
+const firebaseConfig = JSON.parse(__firebase_config);
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'performance-tracker-v1';
 
 export default function App() {
-    const [user, setUser] = useState(null);
-    const [loading, setLoading] = useState(true);
-    const [employees, setEmployees] = useState([]);
-    const [logs, setLogs] = useState([]);
-    const [isConfigMissing, setIsConfigMissing] = useState(!finalConfig || !finalConfig.apiKey);
-    
-    const [activeTab, setActiveTab] = useState('employee');
-    const [selectedEmpId, setSelectedEmpId] = useState('');
-    const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().slice(0, 7));
-    const [authMode, setAuthMode] = useState(null);
-    const [passwordInput, setPasswordInput] = useState('');
-    const [selectedItemLabel, setSelectedItemLabel] = useState('');
-    const [customPoints, setCustomPoints] = useState(0);
-    const [occurrenceDate, setOccurrenceDate] = useState(new Date().toISOString().split('T')[0]);
-    const [note, setNote] = useState('');
-    const [systemMessage, setSystemMessage] = useState(null);
-    const [editingEmp, setEditingEmp] = useState(null);
-    const [isAddingNew, setIsAddingNew] = useState(false);
-    const [empToDelete, setEmpToDelete] = useState(null);
 
-    // 1. 身份驗證 (遵守 RULE 3)
-    useEffect(() => {
-        if (isConfigMissing || !auth) {
-            setLoading(false);
-            return;
-        }
+  const [user, setUser] = useState(null);
+  const [employees, setEmployees] = useState([]);
+  const [logs, setLogs] = useState([]);
 
-        const initAuth = async () => {
-            try {
-                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                    await signInWithCustomToken(auth, __initial_auth_token);
-                } else {
-                    await signInAnonymously(auth);
-                }
-            } catch (error) {
-                console.error("Auth failed:", error);
-            } finally {
-                setLoading(false);
-            }
-        };
-        initAuth();
-        const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
-        return () => unsubscribe();
-    }, [isConfigMissing]);
+  const [selectedEmpId, setSelectedEmpId] = useState(null);
+  const [selectedItemLabel, setSelectedItemLabel] = useState('');
+  const [customPoints, setCustomPoints] = useState(0);
+  const [note, setNote] = useState('');
+  const [occurrenceDate, setOccurrenceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [logToDelete, setLogToDelete] = useState(null);
+  const [empToDelete, setEmpToDelete] = useState(null);
 
-    // 2. 數據監聽 (遵守 RULE 1 & 2)
-    useEffect(() => {
-        if (!user || !db) return;
-
-        const empRef = collection(db, 'artifacts', finalAppId, 'public', 'data', 'employees');
-        const unsubEmp = onSnapshot(empRef, (snapshot) => {
-            const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setEmployees(data);
-            if (data.length > 0 && !selectedEmpId) {
-                setSelectedEmpId(data[0].id);
-            }
-        }, (err) => {
-            console.error("Firestore Emp Error:", err);
-            showMessage("讀取資料失敗，請檢查權限設定");
-        });
-
-        const logsRef = collection(db, 'artifacts', finalAppId, 'public', 'data', 'logs');
-        const unsubLogs = onSnapshot(logsRef, (snapshot) => {
-            const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setLogs(data);
-        }, (err) => console.error("Firestore Logs Error:", err));
-
-        return () => {
-            unsubEmp();
-            unsubLogs();
-        };
-    }, [user, selectedEmpId]);
-
-    const showMessage = (text) => {
-        setSystemMessage(text);
-        setTimeout(() => setSystemMessage(null), 2500);
+  // 🔐 登入
+  useEffect(() => {
+    const init = async () => {
+      if (typeof __initial_auth_token !== 'undefined') {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
     };
+    init();
+    return onAuthStateChanged(auth, setUser);
+  }, []);
 
-    const getPartnerInfo = (skills) => {
-        const s = Number(skills) || 1;
-        if (s >= 3) return { level: "全能夥伴", color: "text-purple-600", bg: "bg-purple-50" };
-        if (s === 2) return { level: "熟練夥伴", color: "text-blue-600", bg: "bg-blue-50" };
-        return { level: "一般夥伴", color: "text-gray-500", bg: "bg-gray-50" };
+  // 📡 資料監聽
+  useEffect(() => {
+    if (!user) return;
+
+    const empRef = collection(db, 'artifacts', appId, 'public', 'data', 'employees');
+    const logRef = collection(db, 'artifacts', appId, 'public', 'data', 'logs');
+
+    const unsubEmp = onSnapshot(empRef, snap => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setEmployees(data);
+      if (data.length && !selectedEmpId) setSelectedEmpId(data[0].id);
+    });
+
+    const unsubLog = onSnapshot(logRef, snap => {
+      setLogs(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+
+    return () => {
+      unsubEmp();
+      unsubLog();
     };
+  }, [user]);
 
-    const getPerformanceResult = (points) => {
-        const p = Number(points) || 600;
-        if (p >= 500) return { grade: "合格 (A)", color: "text-green-600", bg: "bg-green-50", icon: <CheckCircle2 size={16}/> };
-        if (p >= 481) return { grade: "警示 (B)", color: "text-orange-600", bg: "bg-orange-50", icon: <AlertCircle size={16}/> };
-        return { grade: "重罰 (C)", color: "text-red-600", bg: "bg-red-50", icon: <XCircle size={16}/> };
-    };
+  const showMessage = (msg) => alert(msg);
 
-    const handleAddScore = async () => {
-        if (!user || !selectedEmpId) return;
-        if (!selectedItemLabel || !note) { showMessage("⚠️ 請填寫原因與備註"); return; }
-        
-        const scoreValue = Number(customPoints);
-        const emp = employees.find(e => e.id === selectedEmpId);
-        if (!emp) return;
+  // 🧠 加分 / 扣分（已修正同步問題）
+  const handleAddScore = async () => {
+    if (!selectedItemLabel || !note) {
+      showMessage("請填完整");
+      return;
+    }
 
-        try {
-            const logRef = doc(collection(db, 'artifacts', finalAppId, 'public', 'data', 'logs'));
-            await setDoc(logRef, {
-                empId: selectedEmpId,
-                occurrenceDate,
-                amount: scoreValue,
-                reason: selectedItemLabel,
-                note,
-                createdAt: Date.now()
-            });
+    if (customPoints === 0) {
+      showMessage("分數不能為0");
+      return;
+    }
 
-            const empRef = doc(db, 'artifacts', finalAppId, 'public', 'data', 'employees', selectedEmpId);
-            await updateDoc(empRef, {
-                currentPoints: (emp.currentPoints || 600) + scoreValue
-            });
+    const emp = employees.find(e => e.id === selectedEmpId);
+    if (!emp) return;
 
-            setNote('');
-            setSelectedItemLabel('');
-            setCustomPoints(0);
-            showMessage("✅ 評分已同步");
-        } catch (error) {
-            showMessage("❌ 儲存失敗");
-        }
-    };
+    const newScore = (emp.currentPoints || 0) + customPoints;
+    if (newScore < 0) {
+      showMessage("不可低於0");
+      return;
+    }
 
-    const handleSaveEmployee = async () => {
-        if (!user || !editingEmp) return;
-        try {
-            const empIdStr = isAddingNew ? `emp_${Date.now()}` : editingEmp.id;
-            const empRef = doc(db, 'artifacts', finalAppId, 'public', 'data', 'employees', empIdStr);
-            await setDoc(empRef, {
-                ...editingEmp,
-                id: empIdStr,
-                shop: editingEmp.shop || '分店名稱',
-                currentPoints: editingEmp.currentPoints || 600
-            });
-            setEditingEmp(null);
-            showMessage("👤 資料已更新");
-        } catch (error) {
-            showMessage("❌ 儲存失敗");
-        }
-    };
+    try {
+      // 📝 log
+      const logRef = doc(collection(db, 'artifacts', appId, 'public', 'data', 'logs'));
+      await setDoc(logRef, {
+        empId: selectedEmpId,
+        occurrenceDate,
+        amount: customPoints,
+        reason: selectedItemLabel,
+        note,
+        createdAt: Date.now(),
+        createdBy: user.uid // 🔥誰操作
+      });
 
-    const handleDeleteEmployee = async () => {
-        if (!user || !empToDelete) return;
-        try {
-            const empRef = doc(db, 'artifacts', finalAppId, 'public', 'data', 'employees', empToDelete.id);
-            await deleteDoc(empRef);
-            setEmpToDelete(null);
-            showMessage("🗑️ 夥伴已刪除");
-            if (selectedEmpId === empToDelete.id) setSelectedEmpId('');
-        } catch (error) {
-            showMessage("❌ 刪除失敗");
-        }
-    };
+      // 🔥 原子更新（重點）
+      const empRef = doc(db, 'artifacts', appId, 'public', 'data', 'employees', selectedEmpId);
+      await updateDoc(empRef, {
+        currentPoints: increment(customPoints)
+      });
 
-    const selectedEmp = employees.find(e => e.id === selectedEmpId) || { name: '請選擇', currentPoints: 600, skillsPassed: 1, shop: '未載入' };
-    const empPartnerInfo = getPartnerInfo(selectedEmp.skillsPassed);
-    const empPerfInfo = getPerformanceResult(selectedEmp.currentPoints);
-    
-    const filteredLogs = useMemo(() => {
-        return logs
-            .filter(l => l.empId === selectedEmpId && l.occurrenceDate.startsWith(selectedMonth))
-            .sort((a, b) => b.createdAt - a.createdAt);
-    }, [logs, selectedEmpId, selectedMonth]);
+      setNote('');
+      setSelectedItemLabel('');
+      setCustomPoints(0);
 
-    const monthOptions = useMemo(() => {
-        const options = [];
-        const d = new Date();
-        for (let i = 0; i < 6; i++) {
-            const m = new Date(d.getFullYear(), d.getMonth() - i, 1);
-            options.push(m.toISOString().slice(0, 7));
-        }
-        return options;
-    }, []);
+      showMessage("完成");
 
-    if (loading) return <div className="flex h-screen items-center justify-center font-black text-gray-400 bg-white"><Loader2 className="animate-spin mr-2" /> 連線雲端資料庫中...</div>;
+    } catch (err) {
+      console.error(err);
+      showMessage("失敗");
+    }
+  };
 
-    if (isConfigMissing) return (
-        <div className="min-h-screen flex items-center justify-center bg-gray-50 p-10">
-            <div className="bg-white p-8 rounded-[2rem] shadow-xl text-center space-y-4 max-w-sm border-2 border-orange-100">
-                <AlertTriangle className="mx-auto text-orange-500" size={60} />
-                <h1 className="text-2xl font-black text-gray-800">Firebase 配置缺失</h1>
-                <p className="text-gray-500 text-sm leading-relaxed">偵測到您正在 Vercel 或外部環境執行。請在程式碼最上方的 `firebaseConfig` 填入您的 API 資訊，系統才能正常運作。</p>
-                <div className="text-[10px] bg-gray-100 p-2 rounded text-left font-mono overflow-auto max-h-24">
-                    取得方式：Firebase Console {'->'} 專案設定 {'->'} 您的應用程式 {'->'} 設定
-                </div>
-            </div>
+  // 🔄 撤銷（已修正）
+  const handleDeleteLog = async () => {
+    if (!logToDelete) return;
+
+    try {
+      const empRef = doc(db, 'artifacts', appId, 'public', 'data', 'employees', logToDelete.empId);
+
+      await updateDoc(empRef, {
+        currentPoints: increment(-logToDelete.amount)
+      });
+
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'logs', logToDelete.id));
+
+      setLogToDelete(null);
+      showMessage("已撤銷");
+
+    } catch (err) {
+      showMessage("失敗");
+    }
+  };
+
+  // 🗑 刪員工（連 logs）
+  const handleDeleteEmployee = async () => {
+    if (!empToDelete) return;
+
+    try {
+      const logsRef = collection(db, 'artifacts', appId, 'public', 'data', 'logs');
+      const q = query(logsRef, where("empId", "==", empToDelete.id));
+      const snap = await getDocs(q);
+
+      await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'employees', empToDelete.id));
+
+      setEmpToDelete(null);
+      showMessage("已刪除");
+
+    } catch (err) {
+      showMessage("刪除失敗");
+    }
+  };
+
+  const selectedEmp = employees.find(e => e.id === selectedEmpId);
+
+  if (!user) return <div>Loading...</div>;
+
+  return (
+    <div style={{ padding: 20 }}>
+      <h2>員工考核系統</h2>
+
+      <select onChange={e => setSelectedEmpId(e.target.value)}>
+        {employees.map(e => (
+          <option key={e.id} value={e.id}>{e.name}</option>
+        ))}
+      </select>
+
+      <h3>{selectedEmp?.name}</h3>
+      <h1>{selectedEmp?.currentPoints}</h1>
+
+      <hr />
+
+      <input 
+        placeholder="項目"
+        value={selectedItemLabel}
+        onChange={e => setSelectedItemLabel(e.target.value)}
+      />
+
+      <input 
+        type="number"
+        value={customPoints}
+        onChange={e => setCustomPoints(Number(e.target.value))}
+      />
+
+      <input 
+        placeholder="備註"
+        value={note}
+        onChange={e => setNote(e.target.value)}
+      />
+
+      <button onClick={handleAddScore}>送出</button>
+
+      <hr />
+
+      <h3>紀錄</h3>
+      {logs.map(l => (
+        <div key={l.id}>
+          {l.reason} ({l.amount})
+          <button onClick={() => setLogToDelete(l)}>刪</button>
         </div>
-    );
+      ))}
 
-    return (
-        <div className="min-h-screen pb-20 bg-gray-50 text-[14px] font-sans">
-            <nav className="bg-white/80 backdrop-blur-md border-b sticky top-0 z-40 px-4 py-3 flex flex-col gap-3 shadow-sm md:flex-row md:justify-between md:items-center">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 cursor-pointer" onClick={() => setActiveTab('employee')}>
-                        <div className="w-9 h-9 bg-black rounded-xl flex items-center justify-center text-white shadow-lg"><Award size={20} /></div>
-                        <span className="font-black text-xl tracking-tight text-gray-800">夥伴考核系統</span>
-                    </div>
-                </div>
-                <div className="flex bg-gray-100 p-1 rounded-xl">
-                    <button onClick={() => setActiveTab('employee')} className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${activeTab === 'employee' ? 'bg-white shadow text-black' : 'text-gray-400'}`}>查詢</button>
-                    <button onClick={() => setAuthMode('manager')} className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${activeTab === 'manager' ? 'bg-orange-600 text-white shadow' : 'text-gray-400'}`}>店長</button>
-                    <button onClick={() => setAuthMode('admin')} className={`px-4 py-2 rounded-lg text-xs font-black transition-all ${activeTab === 'admin' ? 'bg-red-600 text-white shadow' : 'text-gray-400'}`}>管理</button>
-                </div>
-            </nav>
+      {logToDelete && (
+        <button onClick={handleDeleteLog}>確認撤銷</button>
+      )}
 
-            <main className="max-w-md mx-auto p-4 space-y-6">
-                {activeTab === 'employee' && (
-                    <div className="space-y-4 animate-in fade-in slide-in-from-bottom-2">
-                        <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
-                            {employees.length > 0 ? employees.map(e => (
-                                <button key={e.id} onClick={() => setSelectedEmpId(e.id)} className={`px-5 py-2.5 rounded-full whitespace-nowrap text-xs font-black border transition-all ${selectedEmpId === e.id ? 'bg-black text-white shadow-xl scale-105 border-black' : 'bg-white text-gray-400 border-gray-200'}`}>{e.name}</button>
-                            )) : <div className="text-gray-300 italic text-xs py-2">目前尚無資料...</div>}
-                        </div>
+      <hr />
 
-                        <div className="bg-white rounded-[2.5rem] overflow-hidden shadow-2xl border border-gray-100">
-                            <div className="bg-gradient-to-br from-gray-800 to-black p-10 text-white text-center relative">
-                                <div className={`text-[11px] font-bold inline-block px-4 py-1 rounded-full mb-3 backdrop-blur-sm border border-white/20 bg-white/10`}>{empPartnerInfo.level}</div>
-                                <div className="text-4xl font-black mb-1">{selectedEmp.name}</div>
-                                <div className="text-[10px] font-bold opacity-50 uppercase tracking-widest">{selectedEmp.shop}</div>
-                            </div>
-                            
-                            <div className="p-6 grid grid-cols-2 gap-3">
-                                <div className="bg-gray-50 p-5 rounded-3xl text-center border border-gray-100">
-                                    <div className="text-[10px] font-black text-gray-400 mb-1 uppercase">年度總積分</div>
-                                    <div className="text-4xl font-black text-gray-800">{selectedEmp.currentPoints}</div>
-                                </div>
-                                <div className={`${empPerfInfo.bg} p-5 rounded-3xl text-center border border-gray-100 flex flex-col justify-center`}>
-                                    <div className={`text-[10px] font-black ${empPerfInfo.color} mb-1 uppercase flex items-center justify-center gap-1`}>{empPerfInfo.icon} 考核結果</div>
-                                    <div className={`text-xl font-black ${empPerfInfo.color}`}>{empPerfInfo.grade}</div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <section className="bg-white p-6 rounded-[2.5rem] shadow-lg border border-gray-100">
-                            <div className="flex justify-between items-center mb-6">
-                                <h3 className="font-black text-lg flex items-center gap-2 text-gray-800"><CalendarSearch size={18} /> 紀錄明細</h3>
-                                <select value={selectedMonth || ''} onChange={(e) => setSelectedMonth(e.target.value)} className="bg-gray-100 px-3 py-2 rounded-xl text-xs font-black text-gray-600 border-none outline-none">
-                                    {monthOptions.map(m => <option key={m} value={m}>{m.replace('-', '/')}份</option>)}
-                                </select>
-                            </div>
-                            <div className="space-y-3">
-                                {filteredLogs.length > 0 ? filteredLogs.map(l => (
-                                    <div key={l.id} className="p-4 bg-gray-50 rounded-2xl flex justify-between items-start border border-gray-100">
-                                        <div className="flex-1">
-                                            <div className="flex items-center gap-2 mb-1">
-                                                <span className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${l.amount < 0 ? 'bg-red-50 text-red-600 border-red-100' : 'bg-green-50 text-green-600 border-green-100'}`}>
-                                                    {l.amount > 0 ? `+${l.amount}` : l.amount}分
-                                                </span>
-                                                <span className="text-[10px] text-gray-400 font-bold">{l.occurrenceDate}</span>
-                                            </div>
-                                            <div className="text-xs font-black text-gray-700">{l.reason}</div>
-                                            {l.note && <div className="text-[11px] text-gray-400 mt-1 italic">「{l.note}」</div>}
-                                        </div>
-                                    </div>
-                                )) : <div className="text-center py-10 opacity-30 italic font-black text-gray-400">目前尚無紀錄</div>}
-                            </div>
-                        </section>
-                    </div>
-                )}
-
-                {activeTab === 'manager' && (
-                    <section className="bg-white p-6 rounded-[2.5rem] shadow-xl border border-orange-50 space-y-4 animate-in fade-in">
-                        <div className="flex justify-between items-center mb-2">
-                            <h2 className="font-black text-xl text-orange-600 flex items-center gap-2"><Edit3 />店長評分</h2>
-                            <input type="date" value={occurrenceDate || ''} onChange={e => setOccurrenceDate(e.target.value)} className="text-[10px] font-black bg-gray-50 p-2 rounded-xl" />
-                        </div>
-                        <select value={selectedEmpId || ''} onChange={e => setSelectedEmpId(e.target.value)} className="w-full p-4 bg-gray-50 border rounded-2xl font-black text-sm outline-none focus:border-orange-500">
-                            <option value="">-- 選擇夥伴 --</option>
-                            {employees.map(e => <option key={e.id} value={e.id}>{e.name} ({e.shop})</option>)}
-                        </select>
-                        <select value={selectedItemLabel || ''} onChange={e => {
-                            setSelectedItemLabel(e.target.value);
-                            const item = [...PERFORMANCE_ITEMS.penalty, ...PERFORMANCE_ITEMS.bonus].find(i => i.label === e.target.value);
-                            if (item) setCustomPoints(item.val);
-                        }} className="w-full p-4 bg-gray-50 border rounded-2xl font-black text-sm outline-none focus:border-orange-500">
-                            <option value="">-- 選擇考核項目 --</option>
-                            <optgroup label="🔴 扣分項目">
-                                {PERFORMANCE_ITEMS.penalty.map(i => <option key={i.label} value={i.label}>{i.label}</option>)}
-                            </optgroup>
-                            <optgroup label="🟢 獎勵項目">
-                                {PERFORMANCE_ITEMS.bonus.map(i => <option key={i.label} value={i.label}>{i.label}</option>)}
-                            </optgroup>
-                        </select>
-                        <textarea placeholder="具體備註原因..." value={note || ''} onChange={e => setNote(e.target.value)} className="w-full h-20 p-4 bg-gray-50 border rounded-2xl font-bold text-sm outline-none resize-none focus:border-orange-500" />
-                        <button onClick={handleAddScore} className="w-full py-5 bg-orange-600 text-white rounded-[2rem] font-black text-lg active:scale-[0.98] transition-all shadow-lg shadow-orange-100">確認送出評分</button>
-                    </section>
-                )}
-
-                {activeTab === 'admin' && (
-                    <section className="bg-white p-7 rounded-[2.5rem] shadow-xl border border-red-50 animate-in fade-in">
-                        <div className="flex justify-between items-center mb-6">
-                            <h2 className="font-black text-xl flex items-center gap-2 text-red-600"><Users />夥伴管理</h2>
-                            <button onClick={() => { setIsAddingNew(true); setEditingEmp({ name: '', shop: '西螺文昌店', skillsPassed: 1, currentPoints: 600 }); }} className="bg-red-600 text-white px-4 py-2 rounded-xl text-xs font-black">+ 新增</button>
-                        </div>
-                        <div className="space-y-3">
-                            {employees.map(e => (
-                                <div key={e.id} className="flex justify-between items-center p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                                    <div className="font-black text-sm">{e.name} <span className="text-[10px] bg-gray-200 px-1.5 py-0.5 rounded ml-2">{e.shop}</span></div>
-                                    <div className="flex gap-1">
-                                        <button onClick={() => { setEditingEmp(e); setIsAddingNew(false); }} className="p-2 text-blue-500"><Edit size={16}/></button>
-                                        <button onClick={() => setEmpToDelete(e)} className="p-2 text-red-400"><Trash2 size={16}/></button>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </section>
-                )}
-            </main>
-
-            {editingEmp && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/50 backdrop-blur-md">
-                    <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 shadow-2xl space-y-5 animate-in zoom-in-95 duration-200">
-                        <h4 className="font-black text-center text-lg">{isAddingNew ? '✨ 新增夥伴' : '📝 修改夥伴'}</h4>
-                        <div className="space-y-4">
-                            <input placeholder="店點名稱" type="text" value={editingEmp.shop || ''} onChange={e => setEditingEmp({...editingEmp, shop: e.target.value})} className="w-full p-4 bg-gray-50 border rounded-2xl font-black outline-none" />
-                            <input placeholder="姓名" type="text" value={editingEmp.name || ''} onChange={e => setEditingEmp({...editingEmp, name: e.target.value})} className="w-full p-4 bg-gray-50 border rounded-2xl font-black outline-none" />
-                            <select value={editingEmp.skillsPassed || 1} onChange={e => setEditingEmp({...editingEmp, skillsPassed: Number(e.target.value)})} className="w-full p-4 bg-gray-50 border rounded-2xl font-black outline-none">
-                                <option value={1}>1 關 (一般夥伴)</option>
-                                <option value={2}>2 關 (熟練夥伴)</option>
-                                <option value={3}>3 關以上 (全能夥伴)</option>
-                            </select>
-                        </div>
-                        <div className="flex gap-2 pt-2">
-                            <button onClick={() => setEditingEmp(null)} className="flex-1 py-4 bg-gray-100 text-gray-400 rounded-2xl font-black">取消</button>
-                            <button onClick={handleSaveEmployee} className="flex-2 py-4 bg-black text-white rounded-2xl font-black">儲存資料</button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {empToDelete && (
-                <div className="fixed inset-0 z-[110] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm">
-                    <div className="bg-white w-full max-w-xs rounded-[2rem] p-8 text-center space-y-4 shadow-2xl border-4 border-red-50">
-                        <AlertTriangle className="mx-auto text-red-500" size={40} />
-                        <h3 className="font-black text-xl">確定刪除 {empToDelete.name}？</h3>
-                        <p className="text-gray-400 text-xs font-bold leading-relaxed">此操作無法復原。所有與該夥伴關聯的評分紀錄將會失去關聯。</p>
-                        <div className="flex gap-3 mt-4">
-                            <button onClick={() => setEmpToDelete(null)} className="flex-1 py-4 bg-gray-100 text-gray-400 rounded-2xl font-black">取消</button>
-                            <button onClick={handleDeleteEmployee} className="flex-1 py-4 bg-red-600 text-white rounded-2xl font-black shadow-lg">刪除</button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {authMode && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/70 backdrop-blur-md">
-                    <div className="bg-white w-full max-w-xs rounded-[2.5rem] p-10 shadow-2xl text-center">
-                        <h4 className="font-black mb-6 text-gray-800 uppercase text-xs">輸入權限密碼</h4>
-                        <input autoFocus type="password" value={passwordInput || ''} onChange={e => setPasswordInput(e.target.value)} className="w-full bg-gray-50 border-2 rounded-2xl px-4 py-5 font-black text-center text-3xl mb-8 outline-none tracking-[0.5em] focus:border-black" />
-                        <div className="flex gap-3">
-                            <button onClick={() => { setAuthMode(null); setPasswordInput(''); }} className="flex-1 py-4 bg-gray-100 text-gray-400 rounded-2xl font-black">返回</button>
-                            <button onClick={() => {
-                                if (passwordInput === (authMode === 'manager' ? '8888' : '9999')) { setActiveTab(authMode); setAuthMode(null); setPasswordInput(''); } 
-                                else showMessage("❌ 密碼錯誤");
-                            }} className="flex-2 py-4 bg-black text-white rounded-2xl font-black">解鎖</button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {systemMessage && (
-                <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-[1000] bg-gray-900 text-white px-8 py-3 rounded-full font-black text-xs animate-in fade-in slide-in-from-bottom-2 duration-300">
-                    {systemMessage}
-                </div>
-            )}
+      <h3>員工</h3>
+      {employees.map(e => (
+        <div key={e.id}>
+          {e.name}
+          <button onClick={() => setEmpToDelete(e)}>刪</button>
         </div>
-    );
+      ))}
+
+      {empToDelete && (
+        <button onClick={handleDeleteEmployee}>確認刪除員工</button>
+      )}
+    </div>
+  );
 }
