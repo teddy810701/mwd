@@ -1,129 +1,418 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Users, PlusCircle, TrendingUp, AlertTriangle, ShieldCheck, DollarSign,
-  History, Settings, ChevronRight, Calendar, Store, UserPlus, Trash2,
-  Lock, Edit3, X, GraduationCap, Trophy, Coins, Search, CheckCircle2,
-  ArrowRight, RotateCcw
-} from 'lucide-react';
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>餐飲夥伴績效考核系統</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-900">
+    <div id="root"></div>
 
-const App = () => {
-  // --- 初始資料與配置 ---
-  const GLOBAL_BASE_BONUS = 600; 
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
 
-  const PERFORMANCE_ITEMS = {
-    penalty: [
-      { label: '遲到 (每分-1)', val: -1 },
-      { label: '延遲開工 (15分以上)', val: -10 },
-      { label: '工作態度不佳', val: -5 },
-      { label: '作業失誤-輕 (漏餐具等)', val: -2 },
-      { label: '作業失誤-重 (燒焦/客訴)', val: -5 },
-      { label: '環境責任 (收班不確實)', val: -3 },
-      { label: '其他扣分事項', val: -1 }
-    ],
-    bonus: [
-      { label: '申請打掃環境', val: 2 },
-      { label: '支援另一間店', val: 1 },
-      { label: '獲得顧客五星評論', val: 2 },
-      { label: '表現優異 (店長推薦)', val: 5 },
-      { label: '其他加分事項', val: 1 }
-    ]
-  };
+        // 使用 SVG 定義 Lucide 圖標，確保不依賴外部 Lucide-React 套件也能運作
+        const Icon = ({ name, size = 20, className = "" }) => {
+            return <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>;
+        };
 
-  const [employees, setEmployees] = useState([
-    { 
-      id: 1, name: '王小明', shop: '西螺文昌店', startDate: '2023-03-28', 
-      level: '全能夥伴', skillsPassed: 3, currentPoints: 585, 
-      multiplier: 1.4, lastYearLow: false 
-    },
-    { 
-      id: 2, name: '李小華', shop: '斗南站前店', startDate: '2024-05-15', 
-      level: '熟練夥伴', skillsPassed: 2, currentPoints: 495, 
-      multiplier: 1.1, lastYearLow: false 
-    }
-  ]);
+        const App = () => {
+            // --- 常數配置 ---
+            const DEFAULT_INITIAL_POINTS = 600;
+            const GLOBAL_BASE_BONUS = 600;
+            
+            const PERFORMANCE_ITEMS = {
+                penalty: [
+                    { label: '遲到 (預設1分/可修改)', val: -1 },
+                    { label: '延遲開工 (15分以上)', val: -10 },
+                    { label: '工作態度不佳 (不服管教)', val: -5 },
+                    { label: '作業失誤-輕 (漏餐具等)', val: -2 },
+                    { label: '作業失誤-重 (燒焦/客訴)', val: -5 },
+                    { label: '環境責任 (收班不確實)', val: -3 },
+                    { label: '服儀不整', val: -2 },
+                    { label: '其他扣分事項', val: -1 }
+                ],
+                bonus: [
+                    { label: '申請打掃環境', val: 2 },
+                    { label: '支援另一間店', val: 1 },
+                    { label: '獲得顧客五星評論', val: 2 },
+                    { label: '表現優異 (店長推薦)', val: 5 },
+                    { label: '其他加分事項', val: 1 }
+                ]
+            };
 
-  const [activeTab, setActiveTab] = useState('employee'); 
-  const [selectedEmpId, setSelectedEmpId] = useState(1);
-  const [authMode, setAuthMode] = useState(null); // 'manager' or 'admin'
-  const [passwordInput, setPasswordInput] = useState('');
-  const [selectedItemLabel, setSelectedItemLabel] = useState('');
-  const [customPoints, setCustomPoints] = useState(0);
-  const [note, setNote] = useState(''); 
-  const [systemMessage, setSystemMessage] = useState(null);
+            // --- 狀態管理 ---
+            const [employees, setEmployees] = useState(() => {
+                const saved = localStorage.getItem('考核系統_員工');
+                return saved ? JSON.parse(saved) : [
+                    { id: 1, name: '王小明', shop: '西螺文昌店', startDate: '2023-03-28', level: '全能夥伴', skillsPassed: 3, initialPoints: 600, currentPoints: 585, multiplier: 1.4, lastYearLow: false },
+                    { id: 2, name: '李小華', shop: '斗南站前店', startDate: '2024-05-15', level: '熟練夥伴', skillsPassed: 2, initialPoints: 600, currentPoints: 495, multiplier: 1.1, lastYearLow: false }
+                ];
+            });
 
-  // --- 計算邏輯 ---
-  const calculateSeniority = (startDate) => {
-    const start = new Date(startDate);
-    const now = new Date();
-    let years = now.getFullYear() - start.getFullYear();
-    const anniversary = new Date(start.setFullYear(now.getFullYear()));
-    if (now < anniversary) years--;
-    return { years, isEligible: years >= 1 };
-  };
+            const [logs, setLogs] = useState(() => {
+                const saved = localStorage.getItem('考核系統_紀錄');
+                return saved ? JSON.parse(saved) : [];
+            });
 
-  const calculateFinalPay = (emp) => {
-    const seniority = calculateSeniority(emp.startDate);
-    if (!seniority.isEligible || emp.skillsPassed < 2) return 0;
-    
-    const points = emp.currentPoints;
-    let ratio = 0;
-    if (points >= 500) ratio = 1;      // A級 全額
-    else if (points >= 481) ratio = 0.5; // B級 半薪
-    
-    return Math.round(GLOBAL_BASE_BONUS * emp.multiplier * ratio);
-  };
+            const [activeTab, setActiveTab] = useState('employee');
+            const [selectedEmpId, setSelectedEmpId] = useState(1);
+            const [authMode, setAuthMode] = useState(null);
+            const [passwordInput, setPasswordInput] = useState('');
+            const [selectedItemLabel, setSelectedItemLabel] = useState('');
+            const [customPoints, setCustomPoints] = useState(0);
+            const [occurrenceDate, setOccurrenceDate] = useState(new Date().toISOString().split('T')[0]);
+            const [note, setNote] = useState('');
+            const [systemMessage, setSystemMessage] = useState(null);
+            const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
+            const [editingEmp, setEditingEmp] = useState(null);
+            const [isAddingNew, setIsAddingNew] = useState(false);
 
-  const showMessage = (text) => {
-    setSystemMessage(text);
-    setTimeout(() => setSystemMessage(null), 2000);
-  };
+            // 資料持久化
+            useEffect(() => { localStorage.setItem('考核系統_員工', JSON.stringify(employees)); }, [employees]);
+            useEffect(() => { localStorage.setItem('考核系統_紀錄', JSON.stringify(logs)); }, [logs]);
+            
+            // 初始化圖標
+            useEffect(() => { if (window.lucide) window.lucide.createIcons(); });
 
-  const handleAuth = () => {
-    if ((authMode === 'manager' && passwordInput === '8888') || 
-        (authMode === 'admin' && passwordInput === '9999')) {
-      setActiveTab(authMode);
-      setAuthMode(null);
-      setPasswordInput('');
-    } else {
-      alert('密碼錯誤！');
-      setPasswordInput('');
-    }
-  };
+            const showMessage = (text, type = 'info') => {
+                setSystemMessage({ text, type });
+                setTimeout(() => setSystemMessage(null), 3000);
+            };
 
-  const selectedEmp = employees.find(e => e.id === selectedEmpId);
+            // --- 核心邏輯 ---
+            const calculateSeniority = (startDate) => {
+                if (!startDate) return { years: 0, months: 0, isEligible: false, text: '未設定' };
+                const start = new Date(startDate);
+                const now = new Date();
+                let years = now.getFullYear() - start.getFullYear();
+                const anniv = new Date(start);
+                anniv.setFullYear(now.getFullYear());
+                if (now < anniv) years--;
+                let months = now.getMonth() - start.getMonth();
+                if (now.getDate() < start.getDate()) months--;
+                if (months < 0) months += 12;
+                return { years, months, isEligible: years >= 1, text: `${years}年${months}個月` };
+            };
 
-  return (
-    <div className="min-h-screen bg-gray-50 text-gray-900 pb-10">
-      {/* 訊息通知 */}
-      {systemMessage && (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-[2000] bg-black text-white px-6 py-3 rounded-full font-bold shadow-xl">
-          {systemMessage}
-        </div>
-      )}
+            const calculateResult = (points, lastYearLow) => {
+                if (lastYearLow && points < 500) return { status: 'D (淘汰)', color: 'text-black', bg: 'bg-black text-white' };
+                if (points >= 500) return { status: 'A (合格)', color: 'text-green-600', bg: 'bg-green-100 text-green-800' };
+                if (points >= 481) return { status: 'B (警示)', color: 'text-orange-600', bg: 'bg-yellow-100 text-yellow-800' };
+                return { status: 'C (重罰)', color: 'text-red-600', bg: 'bg-red-100 text-red-800' };
+            };
 
-      {/* 導航欄 */}
-      <nav className="bg-white border-b sticky top-0 z-[100] p-4 flex justify-between items-center shadow-sm">
-        <div className="flex items-center gap-2">
-          <div className="bg-orange-600 p-2 rounded-lg text-white"><ShieldCheck size={20} /></div>
-          <span className="font-black text-lg">MWD 績效系統</span>
-        </div>
-        <div className="flex gap-2">
-          <button onClick={() => setActiveTab('employee')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'employee' ? 'bg-orange-600 text-white' : 'bg-gray-100'}`}>查詢</button>
-          <button onClick={() => setAuthMode('manager')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'manager' ? 'bg-orange-600 text-white' : 'bg-gray-100'}`}>店長</button>
-          <button onClick={() => setAuthMode('admin')} className={`px-4 py-2 rounded-xl text-xs font-bold ${activeTab === 'admin' ? 'bg-red-600 text-white' : 'bg-gray-100'}`}>管理員</button>
-        </div>
-      </nav>
+            const calculateFinalPay = (emp) => {
+                if (!emp || emp.skillsPassed < 2) return 0;
+                const { isEligible } = calculateSeniority(emp.startDate);
+                if (!isEligible) return 0;
+                const res = calculateResult(emp.currentPoints, emp.lastYearLow);
+                const base = GLOBAL_BASE_BONUS * emp.multiplier;
+                if (res.status.includes('A')) return Math.round(base);
+                if (res.status.includes('B')) return Math.round(base / 2);
+                return 0;
+            };
 
-      <main className="max-w-xl mx-auto p-4 mt-4">
-        {/* 員工列表 (切換用) */}
-        <div className="flex gap-2 overflow-x-auto pb-4 mb-4">
-          {employees.map(emp => (
-            <button key={emp.id} onClick={() => setSelectedEmpId(emp.id)} className={`px-5 py-2 rounded-full text-sm font-bold whitespace-nowrap transition-all ${selectedEmpId === emp.id ? 'bg-black text-white scale-105' : 'bg-white border text-gray-500'}`}>
-              {emp.name}
-            </button>
-          ))}
-        </div>
+            // --- 處理函式 ---
+            const handleAuth = () => {
+                if ((authMode === 'manager' && passwordInput === '8888') || (authMode === 'admin' && passwordInput === '9999')) {
+                    setActiveTab(authMode);
+                    setAuthMode(null);
+                    setPasswordInput('');
+                } else {
+                    showMessage('密碼錯誤', 'error');
+                }
+            };
 
-        {/* 主介面：查詢 */}
-        {activeTab === 'employee' && selectedEmp && (
-          <div className="bg
+            const handlePointChange = (empId, amount, reason) => {
+                const target = employees.find(e => e.id === empId);
+                if (!target || !reason || !note) return;
+                
+                setEmployees(prev => prev.map(e => e.id === empId ? { ...e, currentPoints: e.currentPoints + amount } : e));
+                setLogs(prev => [{
+                    id: Date.now(),
+                    empId,
+                    occurrenceDate,
+                    name: target.name,
+                    amount,
+                    reason,
+                    note,
+                    operator: activeTab === 'manager' ? '店長' : '管理員',
+                    timestamp: new Date().toLocaleString()
+                }, ...prev]);
+                
+                setNote('');
+                setSelectedItemLabel('');
+                setCustomPoints(0);
+                showMessage(`${target.name} 評分完成`, 'success');
+            };
+
+            const deleteEmployee = (id) => {
+                if (confirm('確定要移除這位夥伴嗎？移除後紀錄將無法恢復。')) {
+                    setEmployees(prev => prev.filter(e => e.id !== id));
+                    showMessage('夥伴已移除', 'info');
+                }
+            };
+
+            const selectedEmp = employees.find(e => e.id === selectedEmpId) || employees[0];
+            const filteredLogs = logs.filter(l => l.empId === selectedEmpId && l.occurrenceDate.startsWith(selectedMonth));
+
+            return (
+                <div className="min-h-screen pb-20">
+                    {/* 系統提示 */}
+                    {systemMessage && (
+                        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-[1000] px-6 py-3 rounded-full shadow-2xl font-bold flex items-center gap-2 transition-all ${systemMessage.type === 'error' ? 'bg-red-600 text-white' : 'bg-gray-800 text-white'}`}>
+                            {systemMessage.text}
+                        </div>
+                    )}
+
+                    {/* 導覽列 */}
+                    <nav className="bg-white/80 backdrop-blur-md border-b sticky top-0 z-50 px-4 py-3">
+                        <div className="max-w-5xl mx-auto flex justify-between items-center">
+                            <div className="flex items-center gap-2">
+                                <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center text-white"><Icon name="shield-check" /></div>
+                                <h1 className="text-lg font-black tracking-tighter">考核系統</h1>
+                            </div>
+                            <div className="flex bg-gray-100 p-1 rounded-xl gap-1">
+                                <button onClick={() => setActiveTab('employee')} className={`px-4 py-2 rounded-lg text-xs font-black transition ${activeTab === 'employee' ? 'bg-white shadow text-orange-600' : 'text-gray-400'}`}>查詢</button>
+                                <button onClick={() => setAuthMode('manager')} className={`px-4 py-2 rounded-lg text-xs font-black transition ${activeTab === 'manager' ? 'bg-orange-600 text-white' : 'text-gray-400'}`}>店長</button>
+                                <button onClick={() => setAuthMode('admin')} className={`px-4 py-2 rounded-lg text-xs font-black transition ${activeTab === 'admin' ? 'bg-red-600 text-white' : 'text-gray-400'}`}>管理</button>
+                            </div>
+                        </div>
+                    </nav>
+
+                    <main className="max-w-5xl mx-auto p-4">
+                        {/* 員工查詢介面 */}
+                        {activeTab === 'employee' && (
+                            <div className="space-y-6">
+                                <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide justify-center">
+                                    {employees.map(e => (
+                                        <button key={e.id} onClick={() => setSelectedEmpId(e.id)} className={`px-6 py-2.5 rounded-full whitespace-nowrap text-xs font-black transition-all ${selectedEmpId === e.id ? 'bg-gray-900 text-white' : 'bg-white border'}`}>{e.name}</button>
+                                    ))}
+                                </div>
+                                {selectedEmp && (
+                                    <div className="max-w-2xl mx-auto space-y-6">
+                                        <div className="bg-white rounded-[2.5rem] overflow-hidden shadow-xl border border-gray-100">
+                                            <div className="bg-gradient-to-br from-orange-500 to-red-600 p-10 text-white text-center">
+                                                <div className="inline-block bg-white/20 px-4 py-1 rounded-full text-[10px] font-black mb-4">{selectedEmp.shop} | {selectedEmp.level}</div>
+                                                <h2 className="text-5xl font-black mb-4">{selectedEmp.name}</h2>
+                                                <div className="text-sm font-bold opacity-80 italic">年資：{calculateSeniority(selectedEmp.startDate).text}</div>
+                                            </div>
+                                            <div className="p-8 grid grid-cols-2 gap-4">
+                                                <div className="bg-gray-50 p-6 rounded-3xl text-center">
+                                                    <p className="text-[10px] text-gray-400 font-black mb-1 uppercase">累積積分</p>
+                                                    <div className="text-4xl font-black">{selectedEmp.currentPoints} <span className="text-xs text-gray-300">/ {selectedEmp.initialPoints}</span></div>
+                                                    <div className={`mt-2 inline-block px-3 py-0.5 rounded-full text-[10px] font-bold ${calculateResult(selectedEmp.currentPoints, selectedEmp.lastYearLow).bg}`}>{calculateResult(selectedEmp.currentPoints, selectedEmp.lastYearLow).status}</div>
+                                                </div>
+                                                <div className="bg-orange-50 p-6 rounded-3xl text-center">
+                                                    <p className="text-[10px] text-orange-400 font-black mb-1 uppercase">預計年度獎勵</p>
+                                                    <div className="text-4xl font-black text-orange-600">${calculateFinalPay(selectedEmp)}</div>
+                                                    <div className="text-[10px] text-orange-300 font-bold mt-2">倍率 x{selectedEmp.multiplier}</div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <div className="bg-white rounded-[2.5rem] p-8 shadow-sm border border-gray-100">
+                                            <div className="flex justify-between items-center mb-6">
+                                                <h3 className="font-black text-lg">積分變動明細</h3>
+                                                <input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} className="bg-gray-100 px-3 py-1.5 rounded-xl text-xs font-black outline-none" />
+                                            </div>
+                                            {filteredLogs.length > 0 ? (
+                                                <div className="space-y-3">
+                                                    {filteredLogs.map(log => (
+                                                        <div key={log.id} className="flex justify-between items-center p-4 border rounded-2xl bg-white hover:border-orange-200 transition-all">
+                                                            <div className="flex gap-4 items-center">
+                                                                <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-black ${log.amount >= 0 ? 'bg-green-50 text-green-600' : 'bg-red-50 text-red-600'}`}>{log.amount > 0 ? '+' : ''}{log.amount}</div>
+                                                                <div>
+                                                                    <p className="text-[10px] font-black text-gray-400">{log.occurrenceDate}</p>
+                                                                    <p className="font-black text-sm">{log.reason}</p>
+                                                                    <p className="text-[10px] text-gray-400 italic">"{log.note}"</p>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div className="text-center py-10 text-gray-300 text-xs font-black uppercase tracking-widest">本月無異動紀錄</div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* 店長評分介面 */}
+                        {activeTab === 'manager' && (
+                            <div className="max-w-2xl mx-auto space-y-6">
+                                <section className="bg-white p-8 rounded-[2.5rem] shadow-xl border">
+                                    <div className="flex justify-between items-center mb-8">
+                                        <h2 className="text-xl font-black">店長評分區</h2>
+                                        <input type="date" value={occurrenceDate} onChange={e => setOccurrenceDate(e.target.value)} className="bg-orange-50 px-3 py-1.5 rounded-xl text-xs font-black text-orange-600 outline-none" />
+                                    </div>
+                                    <div className="flex gap-2 overflow-x-auto pb-4 scrollbar-hide mb-6">
+                                        {employees.map(e => (
+                                            <button key={e.id} onClick={() => setSelectedEmpId(e.id)} className={`px-5 py-3 rounded-2xl whitespace-nowrap text-left border-2 transition-all min-w-[120px] ${selectedEmpId === e.id ? 'border-orange-500 bg-orange-50' : 'border-gray-50'}`}>
+                                                <p className="text-[10px] opacity-40 font-bold mb-1">{e.shop}</p>
+                                                <span className="font-black">{e.name}</span>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <div className="space-y-4">
+                                        <select value={selectedItemLabel} onChange={e => {
+                                            setSelectedItemLabel(e.target.value);
+                                            const item = [...PERFORMANCE_ITEMS.penalty, ...PERFORMANCE_ITEMS.bonus].find(i => i.label === e.target.value);
+                                            if (item) setCustomPoints(item.val);
+                                        }} className="w-full bg-gray-50 border-2 rounded-2xl px-4 py-4 font-black outline-none focus:border-orange-400">
+                                            <option value="">請選擇考核項目...</option>
+                                            <optgroup label="🔴 扣分">
+                                                {PERFORMANCE_ITEMS.penalty.map(i => <option key={i.label} value={i.label}>{i.label} ({i.val})</option>)}
+                                            </optgroup>
+                                            <optgroup label="🟢 加分">
+                                                {PERFORMANCE_ITEMS.bonus.map(i => <option key={i.label} value={i.label}>{i.label} (+{i.val})</option>)}
+                                            </optgroup>
+                                        </select>
+                                        <div className="flex items-center gap-4">
+                                            <div className="flex-1 flex items-center bg-gray-50 border-2 rounded-2xl">
+                                                <button onClick={() => setCustomPoints(p => p - 1)} className="p-4 text-gray-400"><Icon name="minus" size={16}/></button>
+                                                <input type="number" value={customPoints} onChange={e => setCustomPoints(parseInt(e.target.value) || 0)} className="w-full bg-transparent text-center font-black text-xl outline-none" />
+                                                <button onClick={() => setCustomPoints(p => p + 1)} className="p-4 text-gray-400"><Icon name="plus" size={16}/></button>
+                                            </div>
+                                        </div>
+                                        <textarea placeholder="詳細事由..." value={note} onChange={e => setNote(e.target.value)} className="w-full h-24 p-4 bg-gray-50 border-2 rounded-2xl font-medium outline-none focus:border-orange-400" />
+                                        <button onClick={() => handlePointChange(selectedEmpId, customPoints, selectedItemLabel)} disabled={!selectedItemLabel || !note} className="w-full py-5 bg-orange-600 text-white rounded-3xl font-black text-xl disabled:bg-gray-200 shadow-lg active:scale-95 transition-all">送出評分</button>
+                                    </div>
+                                </section>
+                            </div>
+                        )}
+
+                        {/* 管理員介面 */}
+                        {activeTab === 'admin' && (
+                            <div className="space-y-6">
+                                <div className="bg-gray-900 text-white p-8 rounded-[2.5rem] flex justify-between items-center shadow-2xl">
+                                    <div>
+                                        <h2 className="text-2xl font-black">夥伴資料總覽</h2>
+                                        <p className="text-[10px] text-gray-400 uppercase tracking-widest font-bold">Personnel Admin</p>
+                                    </div>
+                                    <button onClick={() => {
+                                        setIsAddingNew(true);
+                                        setEditingEmp({ id: Date.now(), name: '', shop: '西螺文昌店', startDate: new Date().toISOString().split('T')[0], level: '一般夥伴', skillsPassed: 0, initialPoints: 600, currentPoints: 600, multiplier: 1.0, lastYearLow: false });
+                                    }} className="bg-red-600 px-6 py-3 rounded-2xl text-xs font-black shadow-lg hover:bg-red-500 transition">註冊新夥伴</button>
+                                </div>
+                                <div className="bg-white rounded-[2.5rem] border overflow-hidden shadow-sm">
+                                    <table className="w-full text-left">
+                                        <thead className="bg-gray-50 text-[10px] font-black text-gray-400 border-b uppercase">
+                                            <tr>
+                                                <th className="p-6">基本資訊</th>
+                                                <th className="p-6">績效積分</th>
+                                                <th className="p-6">操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y">
+                                            {employees.map(e => (
+                                                <tr key={e.id} className="hover:bg-gray-50 transition-colors">
+                                                    <td className="p-6">
+                                                        <div className="font-black text-gray-800">{e.name}</div>
+                                                        <div className="text-[10px] text-gray-400">{e.shop} | {e.startDate}</div>
+                                                    </td>
+                                                    <td className="p-6">
+                                                        <div className="font-black">{e.currentPoints} <span className="text-gray-300 font-normal text-[10px]">/ {e.initialPoints}</span></div>
+                                                        <div className={`text-[10px] font-bold ${calculateResult(e.currentPoints, e.lastYearLow).color}`}>{calculateResult(e.currentPoints, e.lastYearLow).status}</div>
+                                                    </td>
+                                                    <td className="p-6">
+                                                        <div className="flex gap-2">
+                                                            <button onClick={() => { setEditingEmp(e); setIsAddingNew(false); }} className="p-2 text-blue-600 hover:bg-blue-50 rounded-xl transition"><Icon name="edit-3" size={18}/></button>
+                                                            <button onClick={() => deleteEmployee(e.id)} className="p-2 text-red-600 hover:bg-red-50 rounded-xl transition"><Icon name="trash-2" size={18}/></button>
+                                                        </div>
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {/* 認證視窗 */}
+                    {authMode && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setAuthMode(null)}></div>
+                            <div className="bg-white w-full max-w-xs rounded-3xl p-8 relative z-10 shadow-2xl animate-in zoom-in-95 duration-200">
+                                <h4 className="font-black text-center mb-6">{authMode === 'manager' ? '店長身份認證' : '系統管理員認證'}</h4>
+                                <input autoFocus type="password" placeholder="請輸入密碼..." value={passwordInput} onChange={e => setPasswordInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAuth()} className="w-full bg-gray-50 border-2 rounded-2xl px-4 py-3 font-black text-center mb-4 focus:border-orange-500 outline-none" />
+                                <button onClick={handleAuth} className="w-full py-3 bg-gray-900 text-white rounded-2xl font-black">登入系統</button>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 編輯員工視窗 */}
+                    {editingEmp && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+                            <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setEditingEmp(null)}></div>
+                            <div className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 relative z-10 shadow-2xl space-y-4">
+                                <h4 className="font-black text-xl mb-4">{isAddingNew ? '註冊新夥伴' : `編輯 ${editingEmp.name}`}</h4>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="text-[10px] font-black text-gray-400 uppercase ml-1">夥伴姓名</label>
+                                        <input type="text" value={editingEmp.name} onChange={e => setEditingEmp({...editingEmp, name: e.target.value})} className="w-full bg-gray-50 border-2 rounded-2xl px-4 py-2 font-bold outline-none focus:border-red-400" />
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="text-[10px] font-black text-gray-400 uppercase ml-1">所屬店別</label>
+                                            <select value={editingEmp.shop} onChange={e => setEditingEmp({...editingEmp, shop: e.target.value})} className="w-full bg-gray-50 border-2 rounded-2xl px-4 py-2 font-bold outline-none">
+                                                <option value="西螺文昌店">西螺店</option>
+                                                <option value="斗南站前店">斗南店</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-gray-400 uppercase ml-1">到職日期</label>
+                                            <input type="date" value={editingEmp.startDate} onChange={e => setEditingEmp({...editingEmp, startDate: e.target.value})} className="w-full bg-gray-50 border-2 rounded-2xl px-4 py-2 font-bold outline-none" />
+                                        </div>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <label className="text-[10px] font-black text-gray-400 uppercase ml-1">獎金倍率</label>
+                                            <input type="number" step="0.1" value={editingEmp.multiplier} onChange={e => setEditingEmp({...editingEmp, multiplier: parseFloat(e.target.value) || 0})} className="w-full bg-gray-50 border-2 rounded-2xl px-4 py-2 font-bold outline-none" />
+                                        </div>
+                                        <div>
+                                            <label className="text-[10px] font-black text-gray-400 uppercase ml-1">通過關卡</label>
+                                            <input type="number" value={editingEmp.skillsPassed} onChange={e => setEditingEmp({...editingEmp, skillsPassed: parseInt(e.target.value) || 0})} className="w-full bg-gray-50 border-2 rounded-2xl px-4 py-2 font-bold outline-none" />
+                                        </div>
+                                    </div>
+                                </div>
+                                <button onClick={() => {
+                                    if (isAddingNew) {
+                                        setEmployees(prev => [...prev, editingEmp]);
+                                        showMessage('成功註冊', 'success');
+                                    } else {
+                                        setEmployees(prev => prev.map(e => e.id === editingEmp.id ? editingEmp : e));
+                                        showMessage('資料更新', 'success');
+                                    }
+                                    setEditingEmp(null);
+                                }} className="w-full py-4 bg-gray-900 text-white rounded-3xl font-black text-lg">儲存設定</button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
